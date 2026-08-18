@@ -60,6 +60,7 @@ flowchart TB
             end
             subgraph Priv1["Private subnet"]
                 App1[App server]
+                DB[(Database)]
             end
         end
         subgraph AZ2["AZ 2"]
@@ -68,9 +69,6 @@ flowchart TB
             subgraph Priv2["Private subnet"]
                 App2[App server]
             end
-        end
-        subgraph DBSubnet["DB subnet group — spans AZ1 + AZ2"]
-            DB[(Database)]
         end
     end
     LB --> App1
