@@ -21,6 +21,18 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 - VM1 (public): the only machine with a public IP. Accessed exclusively via AWS SSM Session Manager — no SSH port ever opened to the internet.
 - VM2 & VM3 (private): no public IP at all. SSH access restricted to VM1's private IP only, via security group rules.
 
+```mermaid
+flowchart TB
+    You((You / laptop)) -.SSM.-> VM1[VM1 — public entry point]
+    subgraph Private["Private network — no internet exposure"]
+        VM2[VM2 — runs nginx]
+        VM3[VM3 — fetches VM2's page]
+    end
+    VM1 -.SSH.-> VM2
+    VM1 -.SSH.-> VM3
+    VM3 -->|curl| VM2
+```
+
 **Real issue hit and resolved:**
 - Issue 1 — SSH to VM1 blocked:** initial SSH attempts to VM1 timed out consistently. Diagnosed methodically — verified the security group, route table, and instance health were all correct, then ruled out the network by testing over a different connection entirely. Isolated the cause to the laptop's own device-level policy blocking outbound SSH, regardless of network. Resolved by switching to SSM Session Manager, which uses HTTPS instead of SSH — arguably the more production-appropriate choice anyway, since it requires no open inbound port at all.
 
@@ -29,7 +41,6 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 **Break/fix cycle:** stopped nginx on VM2 deliberately, diagnosed using `systemctl status`, `journalctl`, and `ss -tlnp` as if walking in cold, restarted it, and verified the fix from VM3 — the actual dependent machine — rather than from VM2 itself.
 
 **Files:** see `00-fundamentals/` for setup scripts and the architecture diagram. `build-log.md` in particular documents the full connection setup, both key-related bugs, and the security group fix that let VM3 reach VM2 — details not captured in the scripts themselves.
-
 
 
 ## Stage 1 — Manual + CLI-Scripted Two-Tier Architecture
