@@ -7,8 +7,8 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Stage | Description | Status |
 |---|---|---|
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
-| AWS CLI two-tier | Manual then scripted two-tier app | Planned |
-| Terraform platform | Infrastructure as code | Planned |
+| AWS CLI two-tier | Manual then scripted two-tier app | Complete |
+| Terraform platform | Infrastructure as code | Complete |
 | CI/CD pipeline | Containerized deploy pipeline | Planned |
 | Kubernetes | EKS platform | Planned |
 | Observability | Monitoring & SRE practices | Planned |
