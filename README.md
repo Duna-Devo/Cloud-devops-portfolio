@@ -51,7 +51,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Internet((Internet)) --> LB[Load balancer]
+    Internet((Internet)) --> LB["Load balancer<br/>(genuinely runs in both AZs' public subnets)"]
     subgraph VPC
         LB
         subgraph AZ1["AZ 1"]
@@ -60,7 +60,7 @@ flowchart TB
             end
             subgraph Priv1["Private subnet"]
                 App1[App server]
-                DB[(Database)]
+                DB["Database<br/>(subnet group allows either AZ — currently running here)"]
             end
         end
         subgraph AZ2["AZ 2"]
@@ -78,7 +78,6 @@ flowchart TB
     App1 --> DB
     App2 --> DB
 ```
-
 
 **Verified end to end:** laptop → bastion → app server → database, confirmed working on both the manual and CLI-rebuilt versions.
 
