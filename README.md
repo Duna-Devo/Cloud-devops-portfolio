@@ -57,11 +57,13 @@ flowchart TB
             LB
             Bastion[Bastion host]
         end
-        subgraph Private["Private subnet"]
-            App1[App server 1]
-            App2[App server 2]
-            DB[(Database)]
+        subgraph AZ1["Private subnet — AZ 1"]
+            App1[App server]
         end
+        subgraph AZ2["Private subnet — AZ 2"]
+            App2[App server]
+        end
+        DB[(Database)]
     end
     LB --> App1
     LB --> App2
@@ -70,6 +72,7 @@ flowchart TB
     App1 --> DB
     App2 --> DB
 ```
+
 
 **Verified end to end:** laptop → bastion → app server → database, confirmed working on both the manual and CLI-rebuilt versions.
 
