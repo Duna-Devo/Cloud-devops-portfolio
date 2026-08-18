@@ -51,12 +51,15 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Internet((Internet)) --> LB["Load balancer<br/>(genuinely runs in both AZs' public subnets)"]
+    Internet((Internet)) --> IGW[Internet gateway]
+    IGW --> LB["Load balancer<br/>(genuinely runs in both AZs' public subnets)"]
     subgraph VPC
         LB
+        IGW
         subgraph AZ1["AZ 1"]
             subgraph Pub1["Public subnet"]
                 Bastion[Bastion]
+                NAT[NAT gateway]
             end
             subgraph Priv1["Private subnet"]
                 App1[App server]
@@ -77,7 +80,11 @@ flowchart TB
     Bastion -.SSH.-> App2
     App1 --> DB
     App2 --> DB
+    App1 -.outbound only.-> NAT
+    App2 -.outbound only.-> NAT
+    NAT --> IGW
 ```
+
 
 **Verified end to end:** laptop → bastion → app server → database, confirmed working on both the manual and CLI-rebuilt versions.
 
