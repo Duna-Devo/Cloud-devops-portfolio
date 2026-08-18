@@ -38,6 +38,28 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 **What was built:** custom VPC, 4 subnets (2 public, 2 private) across 2 AZs, IGW + NAT Gateway, layered security groups (ALB → app → database, plus bastion), ALB with target group and Auto Scaling Group, RDS MySQL database (private only), and a bastion host — built once by hand, then torn down and rebuilt identically via a one-shot AWS CLI script.
 
+```mermaid
+flowchart TB
+    Internet((Internet)) --> LB[Load balancer]
+    subgraph VPC
+        subgraph Public["Public subnet"]
+            LB
+            Bastion[Bastion host]
+        end
+        subgraph Private["Private subnet"]
+            App1[App server 1]
+            App2[App server 2]
+            DB[(Database)]
+        end
+    end
+    LB --> App1
+    LB --> App2
+    Bastion -.SSH.-> App1
+    Bastion -.SSH.-> App2
+    App1 --> DB
+    App2 --> DB
+```
+
 **Verified end to end:** laptop → bastion → app server → database, confirmed working on both the manual and CLI-rebuilt versions.
 
 **Real bugs hit and fixed:** an EC2 key pair got recreated under the same name but different underlying key material, causing persistent "Permission denied" errors; resolved by generating a fresh, dedicated key pair. The CLI-scripted security groups initially omitted the bastion→app-server SSH rule present in the manual build; found via a connection timeout, fixed by adding the missing rule.
