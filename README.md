@@ -53,17 +53,25 @@ flowchart TB
 flowchart TB
     Internet((Internet)) --> LB[Load balancer]
     subgraph VPC
-        subgraph Public["Public subnet"]
-            LB
-            Bastion[Bastion host]
+        LB
+        subgraph AZ1["AZ 1"]
+            subgraph Pub1["Public subnet"]
+                Bastion[Bastion]
+            end
+            subgraph Priv1["Private subnet"]
+                App1[App server]
+            end
         end
-        subgraph AZ1["Private subnet — AZ 1"]
-            App1[App server]
+        subgraph AZ2["AZ 2"]
+            subgraph Pub2["Public subnet"]
+            end
+            subgraph Priv2["Private subnet"]
+                App2[App server]
+            end
         end
-        subgraph AZ2["Private subnet — AZ 2"]
-            App2[App server]
+        subgraph DBSubnet["DB subnet group — spans AZ1 + AZ2"]
+            DB[(Database)]
         end
-        DB[(Database)]
     end
     LB --> App1
     LB --> App2
