@@ -9,9 +9,11 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code | Complete |
+| Serverless API  | Lambda + API Gateway + DynamoDB, least-privilege IAM, deployed via Terraform | Complete |
 | CI/CD pipeline | Containerized deploy pipeline | Planned |
 | Kubernetes | EKS platform | Planned |
 | Observability | Monitoring & SRE practices | Planned |
+
 
 ## Gate check — write-up
 
@@ -114,3 +116,23 @@ flowchart TB
 **Verified end to end:** laptop → bastion → app server → database, successfully connected via the Terraform-built infrastructure.
 
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
+
+
+## Stage 3b — Serverless API (Lambda + API Gateway + DynamoDB)
+
+**Goal:** build a small, fully working web API with no servers to manage — proving understanding of the serverless pattern and applying the same least-privilege IAM discipline used in every previous stage.
+
+**What was built:** a DynamoDB table (pay-per-request), a Python Lambda function using Boto3 to read/write it, an IAM role scoped to exactly two actions (`PutItem`, `GetItem`) on exactly one table, and an HTTP API Gateway wired to trigger the function — all defined and deployed via Terraform.
+
+```mermaid
+flowchart TB
+    Client((You / client)) --> APIGW[API Gateway]
+    APIGW --> Lambda[Lambda function]
+    Lambda --> DDB[(DynamoDB)]
+```
+
+**Real bug diagnosed and fixed:** initial requests returned a generic "Internal Server Error" with no obvious cause. Diagnosed methodically — confirmed the Lambda permission, the API Gateway integration, and the route were all correctly configured, then invoked Lambda directly (bypassing API Gateway) to isolate the failure to one specific layer. Direct invocation succeeded, proving the Lambda code and IAM permissions were correct — narrowing the bug to how API Gateway was formatting the request. Root cause: a mismatch between the integration's `payload_format_version` (set to 2.0) and the Lambda code, which was written expecting version 1.0's event shape (`event['httpMethod']` at the top level, rather than version 2.0's nested `event['requestContext']['http']['method']`). Fixed by aligning the integration to `payload_format_version = "1.0"`.
+
+**Verified end to end:** POST request saves an item to DynamoDB; GET request fetches that same item back — confirmed via `curl` against the live API endpoint.
+
+**Files:** see `03b-serverless/main.tf` for the full Terraform configuration and `03b-serverless/lambda/handler.py` for the function code.
