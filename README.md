@@ -118,7 +118,7 @@ flowchart TB
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
 
 
-## Stage 3b — Serverless API (Lambda + API Gateway + DynamoDB)
+## Stage 2b — Serverless API (Lambda + API Gateway + DynamoDB)
 
 **Goal:** build a small, fully working web API with no servers to manage — proving understanding of the serverless pattern and applying the same least-privilege IAM discipline used in every previous stage.
 
@@ -135,4 +135,4 @@ flowchart TB
 
 **Verified end to end:** POST request saves an item to DynamoDB; GET request fetches that same item back — confirmed via `curl` against the live API endpoint.
 
-**Files:** see `03b-serverless/main.tf` for the full Terraform configuration and `03b-serverless/lambda/handler.py` for the function code.
+**Files:** see `02b-serverless/main.tf` for the full Terraform configuration and `02b-serverless/lambda/handler.py` for the function code.
