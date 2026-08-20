@@ -8,12 +8,11 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 |---|---|---|
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
-| Terraform platform | Infrastructure as code | Complete |
-| Serverless API  | Lambda + API Gateway + DynamoDB, least-privilege IAM, deployed via Terraform | Complete |
+| Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
+| Serverless (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
 | CI/CD pipeline | Containerized deploy pipeline | Planned |
 | Kubernetes | EKS platform | Planned |
 | Observability | Monitoring & SRE practices | Planned |
-
 
 ## Gate check — write-up
 
@@ -118,7 +117,7 @@ flowchart TB
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
 
 
-## Stage 2b — Serverless API (Lambda + API Gateway + DynamoDB)
+## Serverless API (Terraform) — Lambda + API Gateway + DynamoDB
 
 **Goal:** build a small, fully working web API with no servers to manage — proving understanding of the serverless pattern and applying the same least-privilege IAM discipline used in every previous stage.
 
@@ -135,4 +134,4 @@ flowchart TB
 
 **Verified end to end:** POST request saves an item to DynamoDB; GET request fetches that same item back — confirmed via `curl` against the live API endpoint.
 
-**Files:** see `02b-serverless/main.tf` for the full Terraform configuration and `02b-serverless/lambda/handler.py` for the function code.
+**Files:** see `serverless-terraform/main.tf` for the full Terraform configuration and `serverless-terraform/lambda/handler.py` for the function code.
