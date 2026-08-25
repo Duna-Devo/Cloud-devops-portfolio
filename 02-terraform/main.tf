@@ -7,10 +7,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "stage2-tf-state-335478984954"
+    bucket         = "stage2-tf-state-010429757460"
     key            = "stage2/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "stage2-tf-lock"
     encrypt        = true
   }
 }
@@ -365,3 +364,4 @@ resource "aws_instance" "bastion" {
     Name = "stage2-tf-bastion"
   }
 }
+# pipeline trigger test

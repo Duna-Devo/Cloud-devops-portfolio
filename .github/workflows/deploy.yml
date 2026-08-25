@@ -21,7 +21,8 @@ jobs:
     defaults:
       run:
         working-directory: 02-terraform
-
+    env:
+      TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
