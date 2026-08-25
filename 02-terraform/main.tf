@@ -365,3 +365,4 @@ resource "aws_instance" "bastion" {
     Name = "stage2-tf-bastion"
   }
 }
+# pipeline trigger test
