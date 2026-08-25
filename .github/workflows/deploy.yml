@@ -21,10 +21,14 @@ jobs:
     defaults:
       run:
         working-directory: 02-terraform
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Debug OIDC Token
+        run: |
+          TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
+          echo $TOKEN | python3 -c "import sys,json,base64; t=json.load(sys.stdin)['value'].split('.')[1]; print(json.dumps(json.loads(base64.b64decode(t+'==').decode()), indent=2))"
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
