@@ -255,7 +255,7 @@ resource "aws_launch_template" "app_lt" {
   name_prefix   = "stage2-tf-app-lt"
   image_id      = data.aws_ssm_parameter.al2023_ami.value
   instance_type = "t3.micro"
-  key_name      = "stage1-key"
+  key_name      = "stage2-key"
 
   vpc_security_group_ids = [aws_security_group.app_sg.id]
 
@@ -355,7 +355,7 @@ resource "aws_db_instance" "stage2_db" {
 resource "aws_instance" "bastion" {
   ami                          = data.aws_ssm_parameter.al2023_ami.value
   instance_type                = "t3.micro"
-  key_name                     = "stage1-key"
+  key_name                     = "stage2-key"
   subnet_id                    = aws_subnet.public_1a.id
   vpc_security_group_ids       = [aws_security_group.bastion_sg.id]
   associate_public_ip_address  = true
