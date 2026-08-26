@@ -10,7 +10,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
 | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
-| CI/CD pipeline | Containerized deploy pipeline | Planned |
+| CI/CD pipeline | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | Kubernetes | EKS platform | Planned |
 | Observability | Monitoring & SRE practices | Planned |
 
@@ -136,3 +136,41 @@ flowchart TB
 
 **Files:** see `02b-serverless-terraform/main.tf` for the full Terraform configuration and `02b-serverless-terraform/lambda/handler.py` for the function code.
 
+
+## Stage 3 — CI/CD Pipeline (GitHub Actions + Terraform)
+
+**Goal:** replace manual `terraform apply` runs with an automated pipeline — every infrastructure change reviewed via pull request, planned automatically, and only applied after a deliberate merge to main.
+
+**What was built:** a GitHub Actions pipeline (`.github/workflows/deploy.yml`) that triggers on pull requests and pushes to main, scoped to the `02-terraform/` folder. Pull requests automatically run `terraform plan` and post the output as a PR comment. Merges to main automatically run `terraform apply`. Authentication uses OIDC — no AWS keys stored anywhere; GitHub issues a one-time token per run, AWS verifies it against a trust policy scoped to this repo, and issues temporary credentials.
+
+No one touches AWS directly. No one runs Terraform locally against production. Every change is reviewed, logged, and traceable in Git history.
+
+**Pipeline triggers:**
+- Pull request touching `02-terraform/**` → runs `terraform plan`, posts output as PR comment
+- Push to `main` touching `02-terraform/**` → runs `terraform apply`
+
+**Key design decision:** `continue-on-error: true` on the plan step means plan failures still post to the PR comment, so reviewers see the error rather than just a failed check.
+
+**Real bugs diagnosed and fixed:**
+
+1. OIDC authentication failure — GitHub OIDC tokens for organization accounts include numeric IDs in the `sub` claim (`repo:Duna-Devo@311078967/Cloud-devops-portfolio@1317381594:pull_request`). Fixed by broadening the trust policy condition to `repo:Duna-Devo*:*`.
+
+2. Stale S3 backend — original AWS account closed (free tier expired). New account had no state bucket. `terraform init` failed with a 403. Fixed by creating a new S3 bucket and updating the backend config in `main.tf`.
+
+3. Missing `db_password` variable — Terraform hung waiting for interactive input in the pipeline. Fixed by storing the password as a GitHub Actions secret (`TF_VAR_db_password`) and exposing it via the job `env` block.
+
+4. New-account EC2 security hold — AWS temporarily blocked EC2 launches on the new account pending automated security validation. Cleared naturally.
+
+**Plan review gate verified:** opened a PR with a harmless comment change, confirmed the pipeline automatically posted a "No changes" plan comment, reviewed it, then merged deliberately — proving the full safety flow works as designed.
+
+**Break/catch exercise:** introduced an intentional invalid RDS instance type (`db.invalid.type`). Pipeline ran plan and posted the change to the PR comment. Key lesson: `terraform plan` surfaces what would change but some invalid values are only rejected during `apply`. Human review of the plan output is essential, not optional.
+
+**Key takeaways:**
+- OIDC eliminates stored AWS credentials entirely — credentials are ephemeral, scoped to each pipeline run
+- The pipeline enforces process: plan before apply, review before merge, no manual shortcuts
+- `terraform plan` is a visibility tool, not a complete validator — human review matters
+- Real bugs in CI/CD setup are normal; diagnosing them methodically is the job
+
+**Infrastructure deployed:** full Stage 2 architecture (VPC, public/private subnets, NAT Gateway, ALB, ASG, RDS MySQL, bastion host) — all provisioned via the automated pipeline, not manually.
+
+**Files:** see `.github/workflows/deploy.yml` for the pipeline definition.
