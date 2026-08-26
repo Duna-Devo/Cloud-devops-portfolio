@@ -336,7 +336,7 @@ resource "aws_db_subnet_group" "stage2_db_subnet_group" {
 resource "aws_db_instance" "stage2_db" {
   identifier             = "stage2-tf-db"
   engine                 = "mysql"
-  instance_class         = "db.t3.micro"
+  instance_class         = "db.invalid.type"
   allocated_storage      = 20
   db_name                = "stage2tfdb"
   username               = "admin"
