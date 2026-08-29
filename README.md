@@ -173,4 +173,12 @@ No one touches AWS directly. No one runs Terraform locally against production. E
 
 **Infrastructure deployed:** full Stage 2 architecture (VPC, public/private subnets, NAT Gateway, ALB, ASG, RDS MySQL, bastion host) — all provisioned via the automated pipeline, not manually.
 
+**Teardown:** terraform destroy timed out multiple times due to resource dependency 
+ordering failures — ASG drain timeout, RDS still running, ALB listener blocking 
+target group deletion, NAT Gateway holding an Elastic IP that blocked IGW detachment. 
+Each blocker was cleared manually via AWS CLI in dependency order: RDS → ALB listener 
+→ target group → security groups → NAT Gateway → EIP → IGW → subnets → route tables 
+→ VPC. Root cause: partial state mismatch between Terraform's state file and actual 
+AWS resources after the first failed destroy attempt.
+
 **Files:** see `.github/workflows/deploy.yml` for the pipeline definition.
