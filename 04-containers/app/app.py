@@ -8,7 +8,7 @@ def health():
 
 @app.route('/')
 def home():
-    return jsonify({"message": "Cloud DevOps Portfolio - Stage 4", "version": "1.0"})
+    return jsonify({"message": "Cloud DevOps Portfolio - Stage 4", "version": "1.1"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
