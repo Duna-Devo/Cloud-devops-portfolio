@@ -218,3 +218,5 @@ flowchart TB
 **Live URL:** http://stage4-alb-188309003.us-east-1.elb.amazonaws.com
 
 **Files:** see `04-containers/app/` for the Flask app, Dockerfile, and requirements. See `.github/workflows/container-deploy.yml` for the pipeline definition.
+
+**Teardown:** deleted resources in dependency order — ECS service scaled to zero then deleted, ECS cluster deleted, ALB listener deleted before target groups (listener holds a reference to the target group; deleting out of order returns a ResourceInUse error), Blue and Green target groups deleted, ECR repository force-deleted including all images, IAM access key deleted before IAM user (AWS blocks user deletion until all access keys are removed), IAM role and attached policies deleted, ALB security group deleted. Root cause of most teardown errors: resources that reference other resources must be removed before the thing they reference.
