@@ -196,7 +196,8 @@ flowchart TB
     GitHub -->|triggers| Actions[GitHub Actions]
     Actions -->|docker build + push| ECR[AWS ECR]
     Actions -->|update service| ECS[ECS Fargate]
-    Internet((Internet)) --> ALB[Application Load Balancer]
+    ECR -->|pulls image| ECS    
+	Internet((Internet)) --> ALB[Application Load Balancer]
     ALB --> ECS
 ```
 
