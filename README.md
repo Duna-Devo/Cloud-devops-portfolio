@@ -11,6 +11,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
 | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
 | CI/CD pipeline | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
+| Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
 | Kubernetes | EKS platform | Planned |
 | Observability | Monitoring & SRE practices | Planned |
 
