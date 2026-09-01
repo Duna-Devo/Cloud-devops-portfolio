@@ -182,3 +182,38 @@ Each blocker was cleared manually via AWS CLI in dependency order: RDS → ALB l
 AWS resources after the first failed destroy attempt.
 
 **Files:** see `.github/workflows/deploy.yml` for the pipeline definition.
+
+
+## Stage 4 — Containerization & ECS Deployment
+
+**Goal:** containerize a Flask application using Docker, store the image in AWS ECR, deploy it to ECS Fargate behind an Application Load Balancer, and automate the entire build-push-deploy cycle with a GitHub Actions CI/CD pipeline.
+
+**What was built:** a Flask app with two endpoints (`/` and `/health`), containerized using a Python 3.13-slim base image. The image is stored in ECR and runs on ECS Fargate — no servers to manage. An Application Load Balancer sits in front of the service providing a fixed DNS name, health checks, and zero-downtime rolling deployments. A GitHub Actions pipeline triggers on every push to `main` that touches `04-containers/`, automatically building a new image tagged with the commit SHA, pushing it to ECR, and deploying it to ECS.
+
+```mermaid
+flowchart TB
+    Dev((You / laptop)) -->|git push| GitHub[GitHub]
+    GitHub -->|triggers| Actions[GitHub Actions]
+    Actions -->|docker build + push| ECR[AWS ECR]
+    Actions -->|update service| ECS[ECS Fargate]
+    Internet((Internet)) --> ALB[Application Load Balancer]
+    ALB --> ECS
+```
+
+**Real bugs hit and fixed:**
+
+1. Security group misconfiguration — deployed the ECS service with an empty security group (`securityGroups=[]`), falling back to the default which blocks all inbound internet traffic. Curl requests timed out after 21 seconds with no connection rather than an immediate refusal — the signature of traffic being silently dropped at the network level rather than actively rejected. Fixed by adding an inbound rule opening port 5000 to `0.0.0.0/0` on the default security group.
+
+2. Pipeline action versions deprecated — initial pipeline used `actions/checkout@v3`, `configure-aws-credentials@v2`, and `amazon-ecr-login@v1`, all targeting Node.js 20. GitHub Actions runners upgraded to Node.js 24, causing the pipeline to fail. Fixed by upgrading all actions to their latest versions.
+
+3. Task definition not found — the deploy action expected a local file called `stage4-task` in the repo. The task definition lives in AWS, not as a file. Fixed by adding a step to download the task definition from AWS using `aws ecs describe-task-definition`, inject the new image into it, then deploy the updated file.
+
+4. CodeDeploy controller lock — recreated the ECS service with `--deployment-controller type=CODE_DEPLOY` for blue/green support, which locked the service so only CodeDeploy could trigger deployments. CodeDeploy requires full AWS account activation which was pending. Fixed by deleting and recreating the service with the default rolling deployment controller while keeping the ALB attached.
+
+5. IP address changes on redeployment — ECS assigns a new public IP every time a task is replaced. Fixed permanently by adding an Application Load Balancer — the ALB DNS name never changes regardless of how many times the container is replaced.
+
+**Verified end to end:** pushed a code change, pipeline triggered automatically, new image built with commit SHA tag, pushed to ECR, ECS updated with new task definition revision, container restarted with zero downtime, ALB DNS name returned updated version — confirmed via curl.
+
+**Live URL:** http://stage4-alb-188309003.us-east-1.elb.amazonaws.com
+
+**Files:** see `04-containers/app/` for the Flask app, Dockerfile, and requirements. See `.github/workflows/container-deploy.yml` for the pipeline definition.
