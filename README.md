@@ -222,3 +222,35 @@ flowchart TB
 **Files:** see `04-containers/app/` for the Flask app, Dockerfile, and requirements. See `.github/workflows/container-deploy.yml` for the pipeline definition.
 
 **Teardown:** deleted resources in dependency order — ECS service scaled to zero then deleted, ECS cluster deleted, ALB listener deleted before target groups (listener holds a reference to the target group; deleting out of order returns a ResourceInUse error), Blue and Green target groups deleted, ECR repository force-deleted including all images, IAM access key deleted before IAM user (AWS blocks user deletion until all access keys are removed), IAM role and attached policies deleted, ALB security group deleted. Root cause of most teardown errors: resources that reference other resources must be removed before the thing they reference.
+
+
+Stage 5 — Kubernetes (EKS)
+**Goal:** deploy the same containerized application from Stage 4 onto Amazon EKS instead of ECS Fargate, comparing Kubernetes-native orchestration against AWS's managed container service, and demonstrate Kubernetes' self-healing behavior firsthand.
+
+**What was built:** a dedicated VPC (`10.1.0.0/16`) with 2 public subnets across 2 AZs, an Internet Gateway and routing, IAM roles for the EKS control plane and worker nodes (least-privilege, AWS-managed policies), an EKS cluster (`duna-eks-cluster`), and a managed node group (2x t3.micro EC2 workers). The Stage 4 Flask app image was rebuilt and pushed to a new ECR repository, then deployed via a Kubernetes Deployment (2 replicas) and exposed through a Service of type `LoadBalancer`, which automatically provisioned an AWS load balancer.
+
+```mermaid
+flowchart TB
+    Internet((Internet)) --> LB[Load balancer]
+    subgraph EKS["EKS cluster (control plane)"]
+        LB --> NG["Node group (2x t3.micro EC2 workers)"]
+        subgraph NG
+            Pod1[Pod: app replica 1]
+            Pod2[Pod: app replica 2]
+        end
+    end
+```
+
+**Remote state:** migrated from local to an S3 backend (`duna-eks-tfstate`) partway through the build, using Terraform's newer `use_lockfile` locking method rather than a separate DynamoDB lock table.
+
+**Real bug diagnosed and fixed:** after deploying, the load balancer returned an empty reply on every request. The pods themselves were healthy and running. Checked the pod logs directly and found the Flask app was listening on port 5000, not port 80 — the Deployment and Service manifests had both been written assuming port 80. Fixed by aligning `containerPort` and `targetPort` to 5000 in both manifests, keeping the Service's external port at 80 for a clean public-facing URL. Re-verified via curl against the load balancer's DNS name.
+
+**Break/fix exercise:** deliberately deleted a running pod (`kubectl delete pod`) to test Kubernetes' self-healing. The Deployment detected the replica count had dropped below the desired 2 and automatically scheduled a replacement pod within seconds, with no manual intervention. Confirmed via curl that the app remained reachable throughout, since the Service continued routing traffic to the surviving pod while the replacement started.
+
+**ECS vs. EKS:** ECS is simpler to operate and fully AWS-native, with no separate control-plane fee. EKS costs a flat $0.10/hour for the control plane regardless of usage, with no free tier, but is the more portable and widely-requested skill across DevOps job postings — supporting multi-cloud and hybrid setups that ECS cannot.
+
+**Verified end to end:** `kubectl get nodes` confirmed both worker nodes `Ready`, `kubectl get pods` confirmed both app replicas `Running`, and curl against the load balancer's DNS name returned the app's expected JSON response.
+
+**Files:** see `05-kubernetes-nodes/main.tf` for the full Terraform configuration and `05-kubernetes-nodes/deployment.yaml`, `service.yaml` for the Kubernetes manifests.
+
+**Teardown:** ran `terraform destroy` without first deleting the Kubernetes Service, which left an AWS Load Balancer controller-managed ENI attached to one subnet after the cluster itself was already gone — a dependency Terraform doesn't track since Kubernetes, not Terraform, created the load balancer. The stuck ENI blocked deletion of that subnet, its security group, and the Internet Gateway, and could not be force-detached even with account-level permissions, since AWS restricts direct manipulation of ELB-managed network interfaces. Confirmed via AWS CLI that the EKS cluster, node group, and load balancer itself were already fully deleted and no billable resources remained; the leftover subnet/IGW/security group cost nothing while pending. Resolution: waited for AWS's asynchronous ELB cleanup to release the ENI, then re-ran `terraform destroy` to remove the remaining VPC resources. Lesson for future stages: run `kubectl delete service` before `terraform destroy` whenever a Kubernetes Service of type `LoadBalancer` is involved, so the load balancer is cleanly removed before Terraform tries to tear down the network it depends on.
