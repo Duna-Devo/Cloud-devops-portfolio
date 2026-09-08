@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stage5-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stage5-app
+  template:
+    metadata:
+      labels:
+        app: stage5-app
+    spec:
+      containers:
+      - name: stage5-app
+        image: 010429757460.dkr.ecr.us-east-1.amazonaws.com/stage5-app:latest
+        ports:
+        - containerPort: 5000
