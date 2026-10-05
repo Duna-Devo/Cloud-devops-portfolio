@@ -106,7 +106,7 @@ flowchart TB
 
 **What was built:** the full Stage 1 architecture (VPC, 4 subnets across 2 AZs, IGW, NAT Gateway, route tables, 4 security groups, launch template, ALB, target group, listener, Auto Scaling Group, RDS database, bastion host) — all defined in `main.tf` and created via `terraform apply`.
 
-**Remote state:** state stored in an S3 bucket with DynamoDB-based locking, instead of a local file — set up before any real infrastructure was written, so it was a habit from the first resource onward.
+**Remote state:** state stored in an S3 bucket with S3-native lockfile locking (`use_lockfile`), instead of a local file — set up before any real infrastructure was written, so it was a habit from the first resource onward.
 
 **Secrets handling:** the database password is supplied via a Terraform variable (`var.db_password`), with the real value kept in `terraform.tfvars` — excluded from version control via `.gitignore` — rather than hardcoded into the pushed configuration.
 
