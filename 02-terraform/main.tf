@@ -10,7 +10,8 @@ terraform {
     bucket         = "stage2-tf-state-010429757460"
     key            = "stage2/terraform.tfstate"
     region         = "us-east-1"
-    encrypt        = true
+    encrypt        = true    
+    use_lockfile   = true
   }
 }
 
@@ -364,5 +365,33 @@ resource "aws_instance" "bastion" {
     Name = "stage2-tf-bastion"
   }
 }
+
+resource "aws_sns_topic" "alerts" {
+  name = "asg-alerts"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = "odunayobolarinwa1@gmail.com"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "asg-cpu-high"
+  namespace           = "AWS/EC2"
+  metric_name         = "CPUUtilization"
+  statistic           = "Average"
+  period              = 300
+  evaluation_periods  = 2
+  threshold           = 80
+  comparison_operator = "GreaterThanThreshold"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app_asg.name
+  }
+}
+
+
 # pipeline trigger test
 # testing plan review flow
