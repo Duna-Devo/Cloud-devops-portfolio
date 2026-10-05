@@ -114,6 +114,8 @@ flowchart TB
 
 **Drift detection:** manually edited a security group rule's description directly in the AWS console, then ran `terraform plan`, which correctly detected the change as drift. Ran `terraform apply` to revert AWS back to match the Terraform configuration — confirming code, not console state, is the source of truth.
 
+**Monitoring:** added a CloudWatch alarm on the Auto Scaling Group that fires when average CPU stays above 80% for 10 minutes, with an SNS email notification, all defined in Terraform.
+
 **Verified end to end:** laptop → bastion → app server → database, successfully connected via the Terraform-built infrastructure.
 
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
