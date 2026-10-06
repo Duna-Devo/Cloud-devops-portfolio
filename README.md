@@ -11,6 +11,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
 | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
 | CI/CD pipeline | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
+| CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
 | Kubernetes (node-based) | EKS platform — node-based cluster | Complete |
 | Kubernetes (Fargate) | EKS platform — re-deployed on Fargate for comparison | Planned |
@@ -186,6 +187,33 @@ Each blocker was cleared manually via AWS CLI in dependency order: RDS → ALB l
 AWS resources after the first failed destroy attempt.
 
 **Files:** see `.github/workflows/deploy.yml` for the pipeline definition.
+
+Stage 3b — CI/CD Pipeline (Jenkins on EC2 + Terraform)
+Goal: run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the Stage 2b serverless API, to learn what a self-hosted CI/CD server costs in setup and upkeep.
+
+What was built: a Jenkins server (2.580.1) on a single EC2 instance (t3.small, Amazon Linux 2023), provisioned entirely with Terraform and stored in the S3 remote backend with lockfile locking. The security group opens port 8080 to my IP only, and the server has no SSH key, reached only through SSM Session Manager. Jenkins runs with Java 21, plus Git and Terraform installed on the server. A Jenkinsfile (checkout, init, validate, plan, manual approval, apply) is loaded by a Jenkins job using "Pipeline script from SCM", so the pipeline lives in the repo like the Stage 3 workflow.
+
+No stored AWS keys: Jenkins gets AWS access from the instance's IAM role. The role carries an inline policy limited to the Stage 2b resources (the DynamoDB table, Lambda function and its role, the API) and the state bucket path, not administrator access.
+
+Remote state: the serverless project had no backend, so its state would have disappeared with the Jenkins server. I added a backend.tf storing it in S3 with use_lockfile.
+
+Real bugs hit and fixed:
+
+Jenkins would not start — the service exited with code 1 after five restarts. The journal showed this Jenkins version needs Java 21 or newer, and the server had Java 17. Installed Corretto 21, removed 17, and restarted.
+
+Build stuck on "Waiting for next available executor" — the Nodes page showed the built-in node offline because /tmp (about 955 MiB) was under Jenkins' 1 GiB free-space threshold. Resolved the temp-space limit and brought the node back online.
+
+Terraform install failed on the server — this dnf version expects --add-repo, not --addrepo.
+
+Verified end to end: the pipeline paused at the approval stage, then created all 9 serverless resources on approval. A POST to the live /items route returned "Item created".
+
+Jenkins vs GitHub Actions: the pipeline logic (init, plan, approve, apply) is the same, but Jenkins is a server I had to install, size, secure, and debug, which is where most of the time went. Actions needed none of that.
+
+Not production-grade yet: builds are started by hand, the UI runs over HTTP from one IP, and everything runs on one server. A production setup would add a webhook trigger, per-build agents (for example on Kubernetes), HTTPS, and backups.
+
+Teardown: destroyed the serverless resources first, then the Jenkins server, both with terraform destroy.
+
+Files: see 03b-jenkins/main.tf (Jenkins server) and 03b-jenkins/Jenkinsfile (pipeline). Screenshots of the green pipeline run are in 03b-jenkins/screenshots/.
 
 
 ## Stage 4 — Containerization & ECS Deployment
