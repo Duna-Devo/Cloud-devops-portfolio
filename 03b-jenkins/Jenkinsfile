@@ -1,0 +1,47 @@
+pipeline {
+  agent any
+
+  environment {
+    AWS_DEFAULT_REGION = 'us-east-1'
+  }
+
+  stages {
+    stage('Init') {
+      steps {
+        dir('02b-serverless-terraform') {
+          sh 'terraform init -input=false'
+        }
+      }
+    }
+
+    stage('Validate') {
+      steps {
+        dir('02b-serverless-terraform') {
+          sh 'terraform validate'
+        }
+      }
+    }
+
+    stage('Plan') {
+      steps {
+        dir('02b-serverless-terraform') {
+          sh 'terraform plan -input=false -out=tfplan'
+        }
+      }
+    }
+
+    stage('Approval') {
+      steps {
+        input message: 'Review the plan above. Apply it?', ok: 'Apply'
+      }
+    }
+
+    stage('Apply') {
+      steps {
+        dir('02b-serverless-terraform') {
+          sh 'terraform apply -input=false tfplan'
+        }
+      }
+    }
+  }
+}
