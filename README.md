@@ -13,7 +13,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
-| Kubernetes (node-based) | EKS platform — node-based cluster | Complete |
+| Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
 | Kubernetes (Fargate) | EKS platform — re-deployed on Fargate for comparison | Planned |
 | Observability | Monitoring & SRE practices | Planned |
 
@@ -260,34 +260,46 @@ flowchart TB
 
 
 
-## Stage 5 — Kubernetes (EKS)
+## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
-**Goal:** deploy the same containerized application from Stage 4 onto Amazon EKS instead of ECS Fargate, comparing Kubernetes-native orchestration against AWS's managed container service, and demonstrate Kubernetes' self-healing behavior firsthand.
+**Goal:** deploy the same containerized application from Stage 4 onto Amazon EKS instead of ECS Fargate, demonstrate Kubernetes' self-healing behavior firsthand, and automate releases with a pipeline that deploys to the cluster and rolls back a failed rollout.
 
-**What was built:** a dedicated VPC (`10.1.0.0/16`) with 2 public subnets across 2 AZs, an Internet Gateway and routing, IAM roles for the EKS control plane and worker nodes (least-privilege, AWS-managed policies), an EKS cluster (`duna-eks-cluster`), and a managed node group (2x t3.micro EC2 workers). The Stage 4 Flask app image was rebuilt and pushed to a new ECR repository, then deployed via a Kubernetes Deployment (2 replicas) and exposed through a Service of type `LoadBalancer`, which automatically provisioned an AWS load balancer.
+**What was built:** a dedicated VPC (`10.1.0.0/16`) with 2 public subnets across 2 AZs, an Internet Gateway and routing, IAM roles for the EKS control plane and worker nodes (least-privilege, AWS-managed policies), an EKS cluster (`duna-eks-cluster`), and a managed node group (2x t3.micro EC2 workers). The Stage 4 Flask app image was pushed to a new ECR repository, then deployed via a Kubernetes Deployment (2 replicas) and exposed through a Service of type `LoadBalancer`, which automatically provisioned an AWS load balancer.
 
 ```mermaid
 flowchart TB
+    Dev((You / laptop)) -->|git push| GitHub[GitHub]
+    GitHub -->|triggers| Actions[GitHub Actions]
+    Actions -->|build + push image| ECR[AWS ECR]
+    Actions -->|deploy + rollback| Pods
+    ECR -->|image pulled| Pods
     Internet((Internet)) --> LB[Load balancer]
     subgraph EKS["EKS cluster (control plane)"]
-        LB --> NG["Node group (2x t3.micro EC2 workers)"]
-        subgraph NG
-            Pod1[Pod: app replica 1]
-            Pod2[Pod: app replica 2]
+        subgraph NG["Node group (2x t3.micro EC2 workers)"]
+            Pods[Pods: 2 app replicas]
         end
     end
+    LB --> Pods
 ```
 
 **Remote state:** migrated from local to an S3 backend (`duna-eks-tfstate`) partway through the build, using Terraform's newer `use_lockfile` locking method rather than a separate DynamoDB lock table.
 
-**Real bug diagnosed and fixed:** after deploying, the load balancer returned an empty reply on every request. The pods themselves were healthy and running. Checked the pod logs directly and found the Flask app was listening on port 5000, not port 80 — the Deployment and Service manifests had both been written assuming port 80. Fixed by aligning `containerPort` and `targetPort` to 5000 in both manifests, keeping the Service's external port at 80 for a clean public-facing URL. Re-verified via curl against the load balancer's DNS name.
+**CI/CD pipeline:** a GitHub Actions workflow (`.github/workflows/eks-deploy.yml`) deploys the app on every push that touches `05-kubernetes-nodes/app/` or the manifests. It authenticates with OIDC into a dedicated role (`github-actions-eks-deploy`) defined in Terraform next to the cluster, so no AWS keys are stored. The role can only push to the `stage5-app` ECR repository, describe this cluster, and edit the `default` namespace through an EKS access entry. The pipeline builds the image tagged with the commit SHA, pushes it to ECR, updates the Deployment, waits for the rollout, and runs `kubectl rollout undo` if the rollout fails. The app has its own copy in this folder so a push does not also trigger the Stage 4 ECS pipeline.
+
+**Real bugs diagnosed and fixed:**
+
+1. Empty replies from the load balancer — the pods were healthy and running. Checked the pod logs directly and found the Flask app was listening on port 5000, not port 80 — the Deployment and Service manifests had both been written assuming port 80. Fixed by aligning `containerPort` and `targetPort` to 5000 in both manifests, keeping the Service's external port at 80 for a clean public-facing URL. Re-verified via curl against the load balancer's DNS name.
+
+2. Pipeline never ran — the Actions tab listed no "Deploy to EKS" workflow. The file had been saved in a nested `.github/workflows/.github/workflows/` folder, and GitHub only reads workflows directly in `.github/workflows/`. Recreated it at the correct path.
+
+3. Rollout failed on node capacity — a deploy timed out after 3 minutes with one new pod stuck in `Pending`. The cluster events showed `0/2 nodes are available: 2 Too many pods`: the t3.micro workers hold only a few pods each, and a default rolling update needs a spare slot for the new pod. The pipeline's rollback step restored the previous version automatically, and the app kept answering throughout. Fixed by setting `maxSurge: 0` and `maxUnavailable: 1` in the Deployment, so one old pod stops before its replacement starts.
 
 **Break/fix exercise:** deliberately deleted a running pod (`kubectl delete pod`) to test Kubernetes' self-healing. The Deployment detected the replica count had dropped below the desired 2 and automatically scheduled a replacement pod within seconds, with no manual intervention. Confirmed via curl that the app remained reachable throughout, since the Service continued routing traffic to the surviving pod while the replacement started.
 
 **ECS vs. EKS:** ECS is simpler to operate and fully AWS-native, with no separate control-plane fee. EKS costs a flat $0.10/hour for the control plane regardless of usage, with no free tier, but is the more portable and widely-requested skill across DevOps job postings — supporting multi-cloud and hybrid setups that ECS cannot.
 
-**Verified end to end:** `kubectl get nodes` confirmed both worker nodes `Ready`, `kubectl get pods` confirmed both app replicas `Running`, and curl against the load balancer's DNS name returned the app's expected JSON response.
+**Verified end to end:** `kubectl get nodes` confirmed both worker nodes `Ready`, `kubectl get pods` confirmed both app replicas `Running`, and curl against the load balancer's DNS name returned the app's expected JSON response. For the pipeline, I changed the app's message and version, pushed to `main`, and the new version (1.5) was live at the load balancer with no manual commands. The failed run above also verified the rollback on a real failure, not a staged one.
 
-**Files:** see `05-kubernetes-nodes/main.tf` for the full Terraform configuration and `05-kubernetes-nodes/deployment.yaml`, `service.yaml` for the Kubernetes manifests.
+**Files:** see `05-kubernetes-nodes/main.tf` for the full Terraform configuration (cluster, node group, and the pipeline's role), `05-kubernetes-nodes/deployment.yaml` and `service.yaml` for the Kubernetes manifests, `05-kubernetes-nodes/app/` for the application, and `.github/workflows/eks-deploy.yml` for the pipeline.
 
-**Teardown:** ran `terraform destroy` without first deleting the Kubernetes Service, which left a load balancer running after the cluster itself was already gone — a resource Terraform doesn't track since Kubernetes, not Terraform, created it. The load balancer's network interface blocked deletion of one subnet, the Internet Gateway, and ultimately the VPC itself. Diagnosed methodically: confirmed via `aws elbv2 describe-load-balancers` that no modern (ALB/NLB) load balancer existed, then checked the older `aws elb describe-load-balancers` API and found the actual object there — Kubernetes' in-tree cloud provider had provisioned a **Classic Load Balancer**, a legacy AWS resource type invisible to the newer API. Deleted it directly (`aws elb delete-load-balancer`), which released the stuck network interface, then cleared one remaining orphaned security group before re-running `terraform destroy` successfully. Lesson for future stages: run `kubectl delete service` before `terraform destroy` whenever a Kubernetes Service of type `LoadBalancer` is involved, and remember that Kubernetes-provisioned AWS load balancers may be Classic ELBs, not ALBs/NLBs — check both APIs when troubleshooting.
+**Teardown:** ran `terraform destroy` without first deleting the Kubernetes Service, which left a load balancer running after the cluster itself was already gone — a resource Terraform doesn't track since Kubernetes, not Terraform, created it. The load balancer's network interface blocked deletion of one subnet, the Internet Gateway, and ultimately the VPC itself. Diagnosed methodically: confirmed via `aws elbv2 describe-load-balancers` that no modern (ALB/NLB) load balancer existed, then checked the older `aws elb describe-load-balancers` API and found the actual object there — Kubernetes' in-tree cloud provider had provisioned a **Classic Load Balancer**, a legacy AWS resource type invisible to the newer API. Deleted it directly (`aws elb delete-load-balancer`), which released the stuck network interface, then cleared one remaining orphaned security group before re-running `terraform destroy` successfully. Lesson: run `kubectl delete service` before `terraform destroy` whenever a Kubernetes Service of type `LoadBalancer` is involved, and check both load balancer APIs when troubleshooting.cer` is involved, and remember that Kubernetes-provisioned AWS load balancers may be Classic ELBs, not ALBs/NLBs — check both APIs when troubleshooting.
