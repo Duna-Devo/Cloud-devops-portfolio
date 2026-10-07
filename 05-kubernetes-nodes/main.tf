@@ -87,6 +87,10 @@ resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = "duna-eks-cluster"
   role_arn = aws_iam_role.eks_cluster_role.arn
+     access_config {
+       authentication_mode                         = "API_AND_CONFIG_MAP"
+       bootstrap_cluster_creator_admin_permissions = true
+     }
 
   vpc_config {
     subnet_ids = [
@@ -153,4 +157,75 @@ resource "aws_route_table_association" "eks_rt_assoc_a" {
 resource "aws_route_table_association" "eks_rt_assoc_b" {
   subnet_id      = aws_subnet.eks_subnet_b.id
   route_table_id = aws_route_table.eks_rt.id
+}
+
+data "aws_caller_identity" "me" {}
+
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+}
+
+resource "aws_iam_role" "github_eks_deploy" {
+  name = "github-actions-eks-deploy"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo*/Cloud-devops-portfolio*:ref:refs/heads/main" }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "github_eks_deploy" {
+  name = "ecr-push-and-eks-describe"
+  role = aws_iam_role.github_eks_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage"
+        ]
+        Resource = "arn:aws:ecr:us-east-1:${data.aws_caller_identity.me.account_id}:repository/stage5-app"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "eks:DescribeCluster"
+        Resource = aws_eks_cluster.main.arn
+      }
+    ]
+  })
+}
+
+resource "aws_eks_access_entry" "github" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.github_eks_deploy.arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "github" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.github_eks_deploy.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+
+  access_scope {
+    type       = "namespace"
+    namespaces = ["default"]
+  }
+
+  depends_on = [aws_eks_access_entry.github]
 }
