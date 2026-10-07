@@ -275,4 +275,28 @@ flowchart TB
     Internet((Internet)) --> LB[Load balancer]
     subgraph EKS["EKS cluster (control plane)"]
         subgraph NG["Node group (2x t3.micro EC2 workers)"]
-            Pods[Pods: 2 app
+            Pods[Pods: 2 app replicas]
+        end
+    end
+    LB --> Pods
+```
+
+**CI/CD pipeline:** a workflow (`.github/workflows/eks-deploy.yml`) runs on every push to `05-kubernetes-nodes/app/` or the manifests. It authenticates through OIDC into a Terraform-defined role limited to pushing to one ECR repo, describing the cluster, and editing the `default` namespace, so no AWS keys are stored. It builds the image tagged with the commit SHA, pushes it, updates the Deployment, waits for the rollout, and runs `kubectl rollout undo` if it fails.
+
+**Real bugs diagnosed and fixed:**
+
+1. Empty replies from the load balancer — pod logs showed Flask listening on port 5000 while the manifests assumed port 80. Aligned `containerPort` and `targetPort` to 5000 and kept the Service's external port at 80.
+
+2. Pipeline never ran — the workflow file sat in a nested `.github/workflows/.github/workflows/` folder, and GitHub only reads workflows in `.github/workflows/`. Moved it to the correct path.
+
+3. Rollout failed on node capacity — a new pod stayed `Pending` with `0/2 nodes are available: 2 Too many pods`, because the t3.micro nodes had no spare slot for a rolling update. The pipeline rolled back automatically and the app kept answering. Fixed with `maxSurge: 0` and `maxUnavailable: 1`.
+
+**Break/fix exercise:** deleted a running pod on purpose. The Deployment scheduled a replacement within seconds, and the app stayed reachable through the surviving pod.
+
+**Verified end to end:** both nodes `Ready`, both replicas `Running`, and a pushed change (version 1.5) went live with no manual commands. The failed run also verified the rollback on a real failure.
+
+**ECS vs. EKS:** ECS is simpler and AWS-native with no control-plane fee. EKS costs $0.10/hour for the control plane, but it is the more portable and widely requested skill.
+
+**Teardown:** `terraform destroy` run before deleting the Kubernetes Service left a Kubernetes-created Classic Load Balancer behind, which blocked the subnet, Internet Gateway, and VPC deletion. It was invisible to `aws elbv2` and only appeared under `aws elb`. Deleted it directly, then re-ran the destroy. Lesson: delete the Service before `terraform destroy`, and check both load balancer APIs.
+
+**Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `app/`, and `.github/workflows/eks-deploy.yml`.
