@@ -1,0 +1,59 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '05-kubernetes-nodes/app/**'
+      - '05-kubernetes-nodes/deployment.yaml'
+      - '05-kubernetes-nodes/service.yaml'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: stage5-app
+  EKS_CLUSTER: duna-eks-cluster
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-eks-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./05-kubernetes-nodes/app
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Connect kubectl to the cluster
+        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+
+      - name: Deploy to EKS
+        id: deploy
+        run: |
+          sed -i "s|image: .*stage5-app:.*|image: ${{ steps.build-image.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml
+          kubectl rollout status deployment/stage5-app --timeout=180s
+
+      - name: Roll back on failure
+        if: failure() && steps.deploy.outcome == 'failure'
+        run: kubectl rollout undo deployment/stage5-app
