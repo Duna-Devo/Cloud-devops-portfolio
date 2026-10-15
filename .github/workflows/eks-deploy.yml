@@ -7,6 +7,7 @@ on:
       - '05-kubernetes-nodes/app/**'
       - '05-kubernetes-nodes/deployment.yaml'
       - '05-kubernetes-nodes/service.yaml'
+      - '05-kubernetes-nodes/ingress.yaml'
 
 permissions:
   id-token: write
@@ -34,15 +35,51 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image
+      - name: Build image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./05-kubernetes-nodes/app
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.build-image.outputs.image }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
+
+      - name: Push image
+        run: docker push ${{ steps.build-image.outputs.image }}
 
       - name: Connect kubectl to the cluster
         run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+
+      - name: Deploy to EKS
+        id: deploy
+        run: |
+          sed -i "s|image: .*stage5-app:.*|image: ${{ steps.build-image.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml
+          kubectl rollout status deployment/stage5-app --timeout=180s
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          for i in $(seq 1 30); do
+            HOST=$(kubectl get ingress stage5-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            if [ -n "$HOST" ]; then
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://$HOST/ || true)
+              echo "Attempt $i: $HOST returned $CODE"
+              [ "$CODE" = "200" ] && exit 0
+            fi
+            sleep 10
+          done
+          echo "Smoke test failed"
+          exit 1
+
+      - name: Roll back on failure
+        if: steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure'
+        run: kubectl rollout undo deployment/stage5-app
