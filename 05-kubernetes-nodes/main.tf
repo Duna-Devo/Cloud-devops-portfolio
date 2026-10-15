@@ -320,3 +320,13 @@ resource "aws_iam_role" "lb_controller" {
     }]
   })
 }
+
+resource "aws_iam_policy" "lb_controller" {
+  name   = "eks-lb-controller-policy"
+  policy = file("${path.module}/iam_policy.json")
+}
+
+resource "aws_iam_role_policy_attachment" "lb_controller" {
+  role       = aws_iam_role.lb_controller.name
+  policy_arn = aws_iam_policy.lb_controller.arn
+}
