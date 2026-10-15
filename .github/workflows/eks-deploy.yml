@@ -46,14 +46,3 @@ jobs:
 
       - name: Connect kubectl to the cluster
         run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-
-      - name: Deploy to EKS
-        id: deploy
-        run: |
-          sed -i "s|image: .*stage5-app:.*|image: ${{ steps.build-image.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
-          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml
-          kubectl rollout status deployment/stage5-app --timeout=180s
-
-      - name: Roll back on failure
-        if: failure() && steps.deploy.outcome == 'failure'
-        run: kubectl rollout undo deployment/stage5-app
