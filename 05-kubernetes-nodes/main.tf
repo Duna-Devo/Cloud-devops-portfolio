@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -15,7 +19,7 @@ resource "aws_vpc" "eks_vpc" {
   cidr_block           = "10.1.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags = { Name = "eks-vpc" }
+  tags                 = { Name = "eks-vpc" }
 }
 
 resource "aws_subnet" "eks_subnet_a" {
@@ -87,10 +91,10 @@ resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = "duna-eks-cluster"
   role_arn = aws_iam_role.eks_cluster_role.arn
-     access_config {
-       authentication_mode                         = "API_AND_CONFIG_MAP"
-       bootstrap_cluster_creator_admin_permissions = true
-     }
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
 
   vpc_config {
     subnet_ids = [
@@ -104,11 +108,11 @@ resource "aws_eks_cluster" "main" {
 
 terraform {
   backend "s3" {
-    bucket         = "duna-eks-tfstate"
-    key            = "05-kubernetes-nodes/terraform.tfstate"
-    region         = "us-east-1"
-    use_lockfile   = true
-    encrypt        = true
+    bucket       = "duna-eks-tfstate"
+    key          = "05-kubernetes-nodes/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 
@@ -116,7 +120,7 @@ resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "duna-node-group"
   node_role_arn   = aws_iam_role.eks_node_role.arn
-  subnet_ids      = [aws_subnet.eks_subnet_a.id, aws_subnet.eks_subnet_b.id]
+  subnet_ids      = [aws_subnet.eks_private_a.id, aws_subnet.eks_private_b.id]
 
   scaling_config {
     desired_size = 2
@@ -129,7 +133,9 @@ resource "aws_eks_node_group" "main" {
   depends_on = [
     aws_iam_role_policy_attachment.node_worker_policy,
     aws_iam_role_policy_attachment.node_cni_policy,
-    aws_iam_role_policy_attachment.node_ecr_policy
+    aws_iam_role_policy_attachment.node_ecr_policy,
+    aws_route_table_association.eks_private_assoc_a,
+    aws_route_table_association.eks_private_assoc_b
   ]
 }
 
@@ -230,4 +236,97 @@ resource "aws_eks_access_policy_association" "github" {
   }
 
   depends_on = [aws_eks_access_entry.github]
+}
+
+resource "aws_subnet" "eks_private_a" {
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = "10.1.3.0/24"
+  availability_zone = "us-east-1a"
+  tags = {
+    Name                              = "eks-private-a"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+}
+
+resource "aws_subnet" "eks_private_b" {
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = "10.1.4.0/24"
+  availability_zone = "us-east-1b"
+  tags = {
+    Name                              = "eks-private-b"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+}
+
+resource "aws_eip" "nat" {
+  domain = "vpc"
+  tags   = { Name = "eks-nat-eip" }
+}
+
+resource "aws_nat_gateway" "eks_nat" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.eks_subnet_a.id
+  tags          = { Name = "eks-nat" }
+
+  depends_on = [aws_internet_gateway.eks_igw]
+}
+
+resource "aws_route_table" "eks_private_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.eks_nat.id
+  }
+
+  tags = { Name = "eks-private-rt" }
+}
+
+resource "aws_route_table_association" "eks_private_assoc_a" {
+  subnet_id      = aws_subnet.eks_private_a.id
+  route_table_id = aws_route_table.eks_private_rt.id
+}
+
+resource "aws_route_table_association" "eks_private_assoc_b" {
+  subnet_id      = aws_subnet.eks_private_b.id
+  route_table_id = aws_route_table.eks_private_rt.id
+}
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+}
+
+resource "aws_iam_role" "lb_controller" {
+  name = "eks-lb-controller-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = aws_iam_openid_connect_provider.eks.arn }
+      Condition = {
+        StringEquals = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "lb_controller" {
+  name   = "eks-lb-controller-policy"
+  policy = file("${path.module}/iam_policy.json")
+}
+
+resource "aws_iam_role_policy_attachment" "lb_controller" {
+  role       = aws_iam_role.lb_controller.name
+  policy_arn = aws_iam_policy.lb_controller.arn
 }
