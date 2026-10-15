@@ -175,8 +175,10 @@ resource "aws_iam_role" "github_eks_deploy" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
       Condition = {
-        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo*/Cloud-devops-portfolio*:ref:refs/heads/main" }
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo/Cloud-devops-portfolio:ref:refs/heads/main"
+        }
       }
     }]
   })
