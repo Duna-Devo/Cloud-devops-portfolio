@@ -15,6 +15,6 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: stage5-app
+            name: stage5-app-service
             port:
               number: 80

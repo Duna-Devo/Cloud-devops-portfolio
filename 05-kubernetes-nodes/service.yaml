@@ -3,7 +3,7 @@ kind: Service
 metadata:
   name: stage5-app-service
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: stage5-app
   ports:
