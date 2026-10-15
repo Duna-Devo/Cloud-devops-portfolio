@@ -19,7 +19,7 @@ resource "aws_vpc" "eks_vpc" {
   cidr_block           = "10.1.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags = { Name = "eks-vpc" }
+  tags                 = { Name = "eks-vpc" }
 }
 
 resource "aws_subnet" "eks_subnet_a" {
@@ -91,10 +91,10 @@ resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = "duna-eks-cluster"
   role_arn = aws_iam_role.eks_cluster_role.arn
-     access_config {
-       authentication_mode                         = "API_AND_CONFIG_MAP"
-       bootstrap_cluster_creator_admin_permissions = true
-     }
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
 
   vpc_config {
     subnet_ids = [
@@ -108,11 +108,11 @@ resource "aws_eks_cluster" "main" {
 
 terraform {
   backend "s3" {
-    bucket         = "duna-eks-tfstate"
-    key            = "05-kubernetes-nodes/terraform.tfstate"
-    region         = "us-east-1"
-    use_lockfile   = true
-    encrypt        = true
+    bucket       = "duna-eks-tfstate"
+    key          = "05-kubernetes-nodes/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 
