@@ -415,7 +415,8 @@ resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
 }
 
 resource "aws_iam_role" "tf_plan" {
-  name = "github-actions-tf-plan"
+  count = var.environment == "production" ? 1 : 0
+  name  = "github-actions-tf-plan"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -434,13 +435,15 @@ resource "aws_iam_role" "tf_plan" {
 }
 
 resource "aws_iam_role_policy_attachment" "tf_plan_readonly" {
-  role       = aws_iam_role.tf_plan.name
+  count      = var.environment == "production" ? 1 : 0
+  role       = aws_iam_role.tf_plan[0].name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
 resource "aws_iam_role_policy" "tf_plan_state" {
-  name = "read-terraform-state"
-  role = aws_iam_role.tf_plan.id
+  count = var.environment == "production" ? 1 : 0
+  name  = "read-terraform-state"
+  role  = aws_iam_role.tf_plan[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -460,7 +463,8 @@ resource "aws_iam_role_policy" "tf_plan_state" {
 }
 
 resource "aws_iam_role" "tf_apply" {
-  name = "github-actions-tf-apply"
+  count = var.environment == "production" ? 1 : 0
+  name  = "github-actions-tf-apply"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -479,7 +483,8 @@ resource "aws_iam_role" "tf_apply" {
 }
 
 resource "aws_iam_role_policy_attachment" "tf_apply_admin" {
-  role       = aws_iam_role.tf_apply.name
+  count      = var.environment == "production" ? 1 : 0
+  role       = aws_iam_role.tf_apply[0].name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
