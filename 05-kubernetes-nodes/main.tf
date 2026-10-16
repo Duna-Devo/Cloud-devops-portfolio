@@ -16,36 +16,36 @@ provider "aws" {
 }
 
 resource "aws_vpc" "eks_vpc" {
-  cidr_block           = "10.1.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags                 = { Name = "eks-vpc" }
+  tags                 = { Name = "${local.prefix}eks-vpc" }
 }
 
 resource "aws_subnet" "eks_subnet_a" {
   vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.1.1.0/24"
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 1)
   availability_zone       = "us-east-1a"
   map_public_ip_on_launch = true
   tags = {
-    Name                     = "eks-subnet-a"
+    Name                     = "${local.prefix}eks-subnet-a"
     "kubernetes.io/role/elb" = "1"
   }
 }
 
 resource "aws_subnet" "eks_subnet_b" {
   vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.1.2.0/24"
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 2)
   availability_zone       = "us-east-1b"
   map_public_ip_on_launch = true
   tags = {
-    Name                     = "eks-subnet-b"
+    Name                     = "${local.prefix}eks-subnet-b"
     "kubernetes.io/role/elb" = "1"
   }
 }
 
 resource "aws_iam_role" "eks_cluster_role" {
-  name = "eks-cluster-role"
+  name = "${local.prefix}eks-cluster-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -62,7 +62,7 @@ resource "aws_iam_role_policy_attachment" "cluster_policy" {
 }
 
 resource "aws_iam_role" "eks_node_role" {
-  name = "eks-node-role"
+  name = "${local.prefix}eks-node-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -89,7 +89,7 @@ resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
 }
 
 resource "aws_eks_cluster" "main" {
-  name     = "duna-eks-cluster"
+  name     = "${local.prefix}duna-eks-cluster"
   role_arn = aws_iam_role.eks_cluster_role.arn
   access_config {
     authentication_mode                         = "API_AND_CONFIG_MAP"
@@ -118,7 +118,7 @@ terraform {
 
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "duna-node-group"
+  node_group_name = "${local.prefix}duna-node-group"
   node_role_arn   = aws_iam_role.eks_node_role.arn
   subnet_ids      = [aws_subnet.eks_private_a.id, aws_subnet.eks_private_b.id]
 
@@ -141,7 +141,7 @@ resource "aws_eks_node_group" "main" {
 
 resource "aws_internet_gateway" "eks_igw" {
   vpc_id = aws_vpc.eks_vpc.id
-  tags   = { Name = "eks-igw" }
+  tags   = { Name = "${local.prefix}eks-igw" }
 }
 
 resource "aws_route_table" "eks_rt" {
@@ -152,7 +152,7 @@ resource "aws_route_table" "eks_rt" {
     gateway_id = aws_internet_gateway.eks_igw.id
   }
 
-  tags = { Name = "eks-rt" }
+  tags = { Name = "${local.prefix}eks-rt" }
 }
 
 resource "aws_route_table_association" "eks_rt_assoc_a" {
@@ -172,7 +172,7 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 resource "aws_iam_role" "github_eks_deploy" {
-  name = "github-actions-eks-deploy"
+  name = "${local.prefix}github-actions-eks-deploy"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -240,33 +240,33 @@ resource "aws_eks_access_policy_association" "github" {
 
 resource "aws_subnet" "eks_private_a" {
   vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.1.3.0/24"
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 3)
   availability_zone = "us-east-1a"
   tags = {
-    Name                              = "eks-private-a"
+    Name                              = "${local.prefix}eks-private-a"
     "kubernetes.io/role/internal-elb" = "1"
   }
 }
 
 resource "aws_subnet" "eks_private_b" {
   vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.1.4.0/24"
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 4)
   availability_zone = "us-east-1b"
   tags = {
-    Name                              = "eks-private-b"
+    Name                              = "${local.prefix}eks-private-b"
     "kubernetes.io/role/internal-elb" = "1"
   }
 }
 
 resource "aws_eip" "nat" {
   domain = "vpc"
-  tags   = { Name = "eks-nat-eip" }
+  tags   = { Name = "${local.prefix}eks-nat-eip" }
 }
 
 resource "aws_nat_gateway" "eks_nat" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.eks_subnet_a.id
-  tags          = { Name = "eks-nat" }
+  tags          = { Name = "${local.prefix}eks-nat" }
 
   depends_on = [aws_internet_gateway.eks_igw]
 }
@@ -279,7 +279,7 @@ resource "aws_route_table" "eks_private_rt" {
     nat_gateway_id = aws_nat_gateway.eks_nat.id
   }
 
-  tags = { Name = "eks-private-rt" }
+  tags = { Name = "${local.prefix}eks-private-rt" }
 }
 
 resource "aws_route_table_association" "eks_private_assoc_a" {
@@ -303,7 +303,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
 }
 
 resource "aws_iam_role" "lb_controller" {
-  name = "eks-lb-controller-role"
+  name = "${local.prefix}eks-lb-controller-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -322,7 +322,7 @@ resource "aws_iam_role" "lb_controller" {
 }
 
 resource "aws_iam_policy" "lb_controller" {
-  name   = "eks-lb-controller-policy"
+  name   = "${local.prefix}eks-lb-controller-policy"
   policy = file("${path.module}/iam_policy.json")
 }
 
@@ -387,7 +387,7 @@ variable "alert_email" {
 }
 
 resource "aws_sns_topic" "alerts" {
-  name = "eks-alerts"
+  name = "${local.prefix}eks-alerts"
 }
 
 resource "aws_sns_topic_subscription" "alerts_email" {
@@ -397,7 +397,7 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
-  alarm_name          = "eks-node-cpu-high"
+  alarm_name          = "${local.prefix}eks-node-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -481,4 +481,20 @@ resource "aws_iam_role" "tf_apply" {
 resource "aws_iam_role_policy_attachment" "tf_apply_admin" {
   role       = aws_iam_role.tf_apply.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+variable "environment" {
+  description = "production or staging"
+  type        = string
+  default     = "production"
+}
+
+variable "vpc_cidr" {
+  description = "VPC CIDR block. Use 10.2.0.0/16 for staging."
+  type        = string
+  default     = "10.1.0.0/16"
+}
+
+locals {
+  prefix = var.environment == "production" ? "" : "${var.environment}-"
 }
