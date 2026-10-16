@@ -558,3 +558,130 @@ provider "kubernetes" {
     args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.main.name]
   }
 }
+
+resource "helm_release" "lb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+
+  set {
+    name  = "clusterName"
+    value = aws_eks_cluster.main.name
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.lb_controller.arn
+  }
+  set {
+    name  = "vpcId"
+    value = aws_vpc.eks_vpc.id
+  }
+
+  depends_on = [aws_eks_node_group.main, aws_iam_role_policy_attachment.lb_controller]
+}
+
+resource "helm_release" "metrics_server" {
+  name       = "metrics-server"
+  repository = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart      = "metrics-server"
+  namespace  = "kube-system"
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+resource "aws_iam_role" "cluster_autoscaler" {
+  name = "${local.prefix}eks-cluster-autoscaler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = aws_iam_openid_connect_provider.eks.arn }
+      Condition = {
+        StringEquals = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:cluster-autoscaler"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "cluster_autoscaler" {
+  name = "cluster-autoscaler"
+  role = aws_iam_role.cluster_autoscaler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeLaunchConfigurations",
+          "autoscaling:DescribeScalingActivities",
+          "autoscaling:DescribeTags",
+          "ec2:DescribeImages",
+          "ec2:DescribeInstanceTypes",
+          "ec2:DescribeLaunchTemplateVersions",
+          "ec2:GetInstanceTypesFromInstanceRequirements",
+          "eks:DescribeNodegroup"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:TerminateInstanceInAutoScalingGroup"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "helm_release" "cluster_autoscaler" {
+  name       = "cluster-autoscaler"
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  namespace  = "kube-system"
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = aws_eks_cluster.main.name
+  }
+  set {
+    name  = "awsRegion"
+    value = "us-east-1"
+  }
+  set {
+    name  = "rbac.serviceAccount.name"
+    value = "cluster-autoscaler"
+  }
+  set {
+    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.cluster_autoscaler.arn
+  }
+
+  depends_on = [aws_eks_node_group.main, aws_iam_role_policy.cluster_autoscaler]
+}
+
+resource "aws_iam_role_policy_attachment" "node_cloudwatch_agent" {
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+resource "aws_eks_addon" "container_insights" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "amazon-cloudwatch-observability"
+
+  depends_on = [aws_eks_node_group.main, aws_iam_role_policy_attachment.node_cloudwatch_agent]
+}
