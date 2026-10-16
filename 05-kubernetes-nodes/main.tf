@@ -183,7 +183,7 @@ resource "aws_iam_role" "github_eks_deploy" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo/Cloud-devops-portfolio:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = ["repo:Duna-Devo/Cloud-devops-portfolio:ref:refs/heads/main", "repo:Duna-Devo/Cloud-devops-portfolio:environment:production"]
         }
       }
     }]
