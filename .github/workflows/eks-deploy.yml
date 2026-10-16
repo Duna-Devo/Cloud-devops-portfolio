@@ -8,6 +8,8 @@ on:
       - '05-kubernetes-nodes/deployment.yaml'
       - '05-kubernetes-nodes/service.yaml'
       - '05-kubernetes-nodes/ingress.yaml'
+      - '05-kubernetes-nodes/pdb.yaml'
+      - '05-kubernetes-nodes/hpa.yaml'
 
 permissions:
   id-token: write
@@ -62,7 +64,7 @@ jobs:
         id: deploy
         run: |
           sed -i "s|image: .*stage5-app:.*|image: ${{ steps.build-image.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
-          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml
+          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml -f 05-kubernetes-nodes/pdb.yaml -f 05-kubernetes-nodes/hpa.yaml
           kubectl rollout status deployment/stage5-app --timeout=180s
 
       - name: Smoke test
