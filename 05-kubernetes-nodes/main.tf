@@ -258,39 +258,6 @@ resource "aws_subnet" "eks_private_b" {
   }
 }
 
-resource "aws_eip" "nat" {
-  domain = "vpc"
-  tags   = { Name = "${local.prefix}eks-nat-eip" }
-}
-
-resource "aws_nat_gateway" "eks_nat" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.eks_subnet_a.id
-  tags          = { Name = "${local.prefix}eks-nat" }
-
-  depends_on = [aws_internet_gateway.eks_igw]
-}
-
-resource "aws_route_table" "eks_private_rt" {
-  vpc_id = aws_vpc.eks_vpc.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.eks_nat.id
-  }
-
-  tags = { Name = "${local.prefix}eks-private-rt" }
-}
-
-resource "aws_route_table_association" "eks_private_assoc_a" {
-  subnet_id      = aws_subnet.eks_private_a.id
-  route_table_id = aws_route_table.eks_private_rt.id
-}
-
-resource "aws_route_table_association" "eks_private_assoc_b" {
-  subnet_id      = aws_subnet.eks_private_b.id
-  route_table_id = aws_route_table.eks_private_rt.id
-}
 
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
@@ -502,4 +469,62 @@ variable "vpc_cidr" {
 
 locals {
   prefix = var.environment == "production" ? "" : "${var.environment}-"
+}
+
+resource "aws_eip" "nat_a" {
+  domain = "vpc"
+  tags   = { Name = "${local.prefix}eks-nat-eip-a" }
+}
+
+resource "aws_eip" "nat_b" {
+  domain = "vpc"
+  tags   = { Name = "${local.prefix}eks-nat-eip-b" }
+}
+
+resource "aws_nat_gateway" "eks_nat_a" {
+  allocation_id = aws_eip.nat_a.id
+  subnet_id     = aws_subnet.eks_subnet_a.id
+  tags          = { Name = "${local.prefix}eks-nat-a" }
+
+  depends_on = [aws_internet_gateway.eks_igw]
+}
+
+resource "aws_nat_gateway" "eks_nat_b" {
+  allocation_id = aws_eip.nat_b.id
+  subnet_id     = aws_subnet.eks_subnet_b.id
+  tags          = { Name = "${local.prefix}eks-nat-b" }
+
+  depends_on = [aws_internet_gateway.eks_igw]
+}
+
+resource "aws_route_table" "eks_private_rt_a" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.eks_nat_a.id
+  }
+
+  tags = { Name = "${local.prefix}eks-private-rt-a" }
+}
+
+resource "aws_route_table" "eks_private_rt_b" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.eks_nat_b.id
+  }
+
+  tags = { Name = "${local.prefix}eks-private-rt-b" }
+}
+
+resource "aws_route_table_association" "eks_private_assoc_a" {
+  subnet_id      = aws_subnet.eks_private_a.id
+  route_table_id = aws_route_table.eks_private_rt_a.id
+}
+
+resource "aws_route_table_association" "eks_private_assoc_b" {
+  subnet_id      = aws_subnet.eks_private_b.id
+  route_table_id = aws_route_table.eks_private_rt_b.id
 }
