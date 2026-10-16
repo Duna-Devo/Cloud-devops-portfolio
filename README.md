@@ -280,7 +280,8 @@ flowchart LR
   subgraph VPC[VPC 10.1.0.0/16]
     subgraph pub[Public subnets - 2 AZs]
       alb[ALB + HTTPS - ACM cert]
-      nat[NAT Gateway]
+      nat_a[NAT Gateway AZ a]
+      nat_b[NAT Gateway AZ b]
     end
     subgraph priv[Private subnets - 2 AZs]
       subgraph eks[EKS cluster]
@@ -291,10 +292,13 @@ flowchart LR
 
   user[Users] --> r53[Route 53] --> alb
   alb --> pods
-  pods -.-> nat
+  pods -.->|AZ a egress| nat_a
+  pods -.->|AZ b egress| nat_b
+  helm[Helm releases - LB controller, metrics-server, Cluster Autoscaler] --> eks
   prod --> eks
   cw[CloudWatch alarm] --> sns[SNS email]
   eks -.-> cw
+  ci[Container Insights add-on] -.-> cw
 ```
 
 
