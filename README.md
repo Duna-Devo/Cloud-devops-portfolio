@@ -261,42 +261,64 @@ flowchart TB
 
 ## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
-**Goal:** deploy the Stage 4 Flask app onto Amazon EKS, demonstrate Kubernetes' self-healing, and automate releases with a pipeline that rolls back a failed rollout.
+**Goal:** deploy the Stage 4 Flask app onto Amazon EKS, demonstrate Kubernetes' self-healing, and automate releases with a pipeline that scans the image, promotes it from staging to production, and rolls back a failed rollout.
 
-**What was built:** a dedicated VPC (`10.1.0.0/16`, 2 public subnets across 2 AZs), least-privilege IAM roles, an EKS cluster (`duna-eks-cluster`), and a managed node group (2x t3.micro). The app image lives in ECR and runs as a Deployment (2 replicas) behind a `LoadBalancer` Service. State is stored in S3 (`duna-eks-tfstate`) with `use_lockfile` locking.
+**Status:** the core platform (VPC, EKS, node group, ECR, OIDC pipeline, rollback) was built and verified live. The hardening layers (private networking, ALB with HTTPS, autoscaling, alerting, staging, Terraform pipeline) are written and checked with `terraform validate`, but have not been applied.
+
+**What was built:** a dedicated VPC (`10.1.0.0/16`) with public subnets for load balancers and private subnets for nodes across 2 AZs, with a NAT Gateway for outbound access. Least-privilege IAM roles, an EKS cluster (`duna-eks-cluster`), and a managed node group (t3.medium, desired 2, maximum 3). The app image lives in ECR and runs as a Deployment (2 replicas) with readiness and liveness probes and CPU and memory limits, behind a `ClusterIP` Service and an ALB Ingress provisioned by the AWS Load Balancer Controller. HTTPS uses an ACM certificate validated through Route 53, with HTTP redirected. A PodDisruptionBudget keeps one pod up during maintenance, and a HorizontalPodAutoscaler scales 2 to 4 pods at 70% CPU. A CloudWatch alarm on node CPU sends SNS email alerts. State is stored in S3 (`duna-eks-tfstate`) with `use_lockfile` locking.
 
 ```mermaid
-flowchart TB
-    Dev((You / laptop)) -->|git push| GitHub[GitHub]
-    GitHub -->|triggers| Actions[GitHub Actions]
-    Actions -->|build + push image| ECR[AWS ECR]
-    Actions -->|deploy + rollback| Pods
-    ECR -->|image pulled| Pods
-    Internet((Internet)) --> LB[Load balancer]
-    subgraph EKS["EKS cluster (control plane)"]
-        subgraph NG["Node group (2x t3.micro EC2 workers)"]
-            Pods[Pods: 2 app replicas]
-        end
+flowchart LR
+  dev[Developer push to main] --> gha[GitHub Actions]
+  gha -->|OIDC| iam[IAM deploy role]
+  gha --> build[Build + Trivy scan]
+  build --> ecr[(ECR)]
+  ecr --> stg[Deploy to staging]
+  stg -->|smoke test + rollback| appr{Production approval}
+  appr --> prod[Deploy to production]
+
+  subgraph VPC[VPC 10.1.0.0/16]
+    subgraph pub[Public subnets - 2 AZs]
+      alb[ALB + HTTPS - ACM cert]
+      nat[NAT Gateway]
     end
-    LB --> Pods
+    subgraph priv[Private subnets - 2 AZs]
+      subgraph eks[EKS cluster]
+        pods[App pods x2-4 - HPA + PDB]
+      end
+    end
+  end
+
+  user[Users] --> r53[Route 53] --> alb
+  alb --> pods
+  pods -.-> nat
+  prod --> eks
+  cw[CloudWatch alarm] --> sns[SNS email]
+  eks -.-> cw
 ```
 
-**CI/CD pipeline:** a workflow (`.github/workflows/eks-deploy.yml`) runs on every push to `05-kubernetes-nodes/app/` or the manifests. It authenticates through OIDC into a Terraform-defined role limited to pushing to one ECR repo, describing the cluster, and editing the `default` namespace, so no AWS keys are stored. It builds the image tagged with the commit SHA, pushes it, updates the Deployment, waits for the rollout, and runs `kubectl rollout undo` if it fails.
 
-**Real bugs diagnosed and fixed:**
+**CI/CD pipeline:** a workflow (`.github/workflows/eks-deploy.yml`) runs on every push to `05-kubernetes-nodes/app/` or the manifests. It authenticates through OIDC into a Terraform-defined role limited to pushing to one ECR repo, describing the cluster, and editing the `default` namespace, so no AWS keys are stored. The trust policy matches the exact repo and branch, with no wildcards. It builds the image tagged with the commit SHA, scans it with Trivy (critical and high findings with a fix fail the build), pushes it, deploys to staging, and runs an HTTPS smoke test. If the rollout or the test fails, it runs `kubectl rollout undo`. The same image then goes to production behind a GitHub `production` environment approval, with the same smoke test and rollback.
+
+**Infrastructure pipeline:** a second workflow (`.github/workflows/terraform.yml`) runs format check, validate and plan on pull requests under a read-only role, and apply on merge under a separate role that only the `production` environment can assume. Staging uses the same code through an `environment` variable (name prefix and VPC CIDR) and its own state key.
+
+Real bugs diagnosed and fixed:
 
 1. Empty replies from the load balancer — pod logs showed Flask listening on port 5000 while the manifests assumed port 80. Aligned `containerPort` and `targetPort` to 5000 and kept the Service's external port at 80.
-
 2. Pipeline never ran — the workflow file sat in a nested `.github/workflows/.github/workflows/` folder, and GitHub only reads workflows in `.github/workflows/`. Moved it to the correct path.
-
-3. Rollout failed on node capacity — a new pod stayed `Pending` with `0/2 nodes are available: 2 Too many pods`, because the t3.micro nodes had no spare slot for a rolling update. The pipeline rolled back automatically and the app kept answering. Fixed with `maxSurge: 0` and `maxUnavailable: 1`.
+3. Rollout failed on node capacity — a new pod stayed `Pending` with `0/2 nodes are available: 2 Too many pods`, because the t3.micro nodes had no spare slot for a rolling update. The pipeline rolled back automatically and the app kept answering. Fixed with `maxSurge: 0` and `maxUnavailable: 1`, and later moved to t3.medium nodes.
+4. OIDC trust too broad — the first trust policy used wildcards that would also have matched look-alike repo names. Replaced with exact matches.
 
 **Break/fix exercise:** deleted a running pod on purpose. The Deployment scheduled a replacement within seconds, and the app stayed reachable through the surviving pod.
 
-**Verified end to end:** both nodes `Ready`, both replicas `Running`, and a pushed change (version 1.5) went live with no manual commands. The failed run also verified the rollback on a real failure.
+**Verified end to end (v1):** both nodes `Ready`, both replicas `Running`, and a pushed change (version 1.5) went live with no manual commands. The failed run also verified the rollback on a real failure.
 
 **ECS vs. EKS:** ECS is simpler and AWS-native with no control-plane fee. EKS costs $0.10/hour for the control plane, but it is the more portable and widely requested skill.
 
 **Teardown:** `terraform destroy` run before deleting the Kubernetes Service left a Kubernetes-created Classic Load Balancer behind, which blocked the subnet, Internet Gateway, and VPC deletion. It was invisible to `aws elbv2` and only appeared under `aws elb`. Deleted it directly, then re-ran the destroy. Lesson: delete the Service before `terraform destroy`, and check both load balancer APIs.
 
-**Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `app/`, and `.github/workflows/eks-deploy.yml`.
+**Needed to run the full design:** the AWS Load Balancer Controller and metrics-server installed in the cluster, a domain, hosted zone and alert email passed as Terraform variables, the certificate ARN in `ingress.yaml` filled from `terraform output`, and required reviewers on the `production` environment.
+
+**Next steps:** one NAT Gateway per AZ, a scoped policy with a permissions boundary in place of `AdministratorAccess` on the apply role, Cluster Autoscaler or Karpenter, and Container Insights.
+
+**Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `ingress.yaml`, `pdb.yaml`, `hpa.yaml`, `iam_policy.json`, `app/`, `.github/workflows/eks-deploy.yml`, and `.github/workflows/terraform.yml`.
