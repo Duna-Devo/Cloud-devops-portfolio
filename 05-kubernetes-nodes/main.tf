@@ -413,3 +413,72 @@ resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
     AutoScalingGroupName = aws_eks_node_group.main.resources[0].autoscaling_groups[0].name
   }
 }
+
+resource "aws_iam_role" "tf_plan" {
+  name = "github-actions-tf-plan"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo/Cloud-devops-portfolio:pull_request"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "tf_plan_readonly" {
+  role       = aws_iam_role.tf_plan.name
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+
+resource "aws_iam_role_policy" "tf_plan_state" {
+  name = "read-terraform-state"
+  role = aws_iam_role.tf_plan.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = "arn:aws:s3:::duna-eks-tfstate"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "arn:aws:s3:::duna-eks-tfstate/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "tf_apply" {
+  name = "github-actions-tf-apply"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:Duna-Devo/Cloud-devops-portfolio:environment:production"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "tf_apply_admin" {
+  role       = aws_iam_role.tf_apply.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}

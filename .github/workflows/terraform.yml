@@ -1,0 +1,83 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - '05-kubernetes-nodes/**.tf'
+      - '05-kubernetes-nodes/iam_policy.json'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - '05-kubernetes-nodes/**.tf'
+      - '05-kubernetes-nodes/iam_policy.json'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  TF_DIR: 05-kubernetes-nodes
+  TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+  TF_VAR_hosted_zone_name: ${{ vars.HOSTED_ZONE_NAME }}
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-tf-plan
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Format check
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform fmt -check
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init
+
+      - name: Validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Plan
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform plan -lock=false -no-color -input=false
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (apply role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-tf-apply
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init
+
+      - name: Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve -input=false
