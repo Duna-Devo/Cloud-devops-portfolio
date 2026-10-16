@@ -71,7 +71,7 @@ jobs:
           for i in $(seq 1 30); do
             HOST=$(kubectl get ingress stage5-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
             if [ -n "$HOST" ]; then
-              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://$HOST/ || true)
+              CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 https://$HOST/ || true)
               echo "Attempt $i: $HOST returned $CODE"
               [ "$CODE" = "200" ] && exit 0
             fi
