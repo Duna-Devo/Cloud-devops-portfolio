@@ -435,6 +435,7 @@ resource "aws_iam_role" "tf_plan" {
 }
 
 resource "aws_iam_role_policy_attachment" "tf_plan_readonly" {
+  count = var.environment == "production" ? 1 : 0
   count      = var.environment == "production" ? 1 : 0
   role       = aws_iam_role.tf_plan[0].name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
@@ -483,6 +484,7 @@ resource "aws_iam_role" "tf_apply" {
 }
 
 resource "aws_iam_role_policy_attachment" "tf_apply_admin" {
+  count = var.environment == "production" ? 1 : 0
   count      = var.environment == "production" ? 1 : 0
   role       = aws_iam_role.tf_apply[0].name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
