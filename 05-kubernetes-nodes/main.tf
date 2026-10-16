@@ -457,11 +457,6 @@ resource "aws_iam_role" "tf_apply" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "tf_apply_admin" {
-  count      = var.environment == "production" ? 1 : 0
-  role       = aws_iam_role.tf_apply[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
 
 variable "environment" {
   description = "production or staging"
@@ -684,4 +679,107 @@ resource "aws_eks_addon" "container_insights" {
   addon_name   = "amazon-cloudwatch-observability"
 
   depends_on = [aws_eks_node_group.main, aws_iam_role_policy_attachment.node_cloudwatch_agent]
+}
+
+data "aws_iam_policy_document" "tf_apply_boundary" {
+  statement {
+    sid    = "AllowProjectServices"
+    effect = "Allow"
+    actions = [
+      "ec2:*", "eks:*", "ecr:*", "acm:*", "route53:*", "sns:*",
+      "cloudwatch:*", "autoscaling:*", "elasticloadbalancing:*",
+      "logs:*", "s3:*", "iam:*", "sts:GetCallerIdentity"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "DenyEscalation"
+    effect = "Deny"
+    actions = [
+      "iam:CreateUser", "iam:CreateAccessKey", "iam:CreateLoginProfile",
+      "iam:AttachUserPolicy", "iam:PutUserPolicy",
+      "iam:DeleteRolePermissionsBoundary"
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_policy" "tf_apply_boundary" {
+  count  = var.environment == "production" ? 1 : 0
+  name   = "github-actions-tf-apply-boundary"
+  policy = data.aws_iam_policy_document.tf_apply_boundary.json
+}
+
+data "aws_iam_policy_document" "tf_apply_scoped" {
+  statement {
+    sid    = "ProjectServices"
+    effect = "Allow"
+    actions = [
+      "ec2:*", "eks:*", "ecr:*", "acm:*", "route53:*", "sns:*",
+      "cloudwatch:*", "autoscaling:*", "elasticloadbalancing:*", "logs:*"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "StateBucket"
+    effect  = "Allow"
+    actions = ["s3:*"]
+    resources = [
+      "arn:aws:s3:::duna-eks-tfstate",
+      "arn:aws:s3:::duna-eks-tfstate/*"
+    ]
+  }
+
+  statement {
+    sid       = "IamReadAndOidc"
+    effect    = "Allow"
+    actions   = ["iam:Get*", "iam:List*", "iam:*OpenIDConnectProvider*", "iam:TagRole", "iam:UntagRole", "iam:PassRole", "iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ProjectRolesAndPolicies"
+    effect = "Allow"
+    actions = [
+      "iam:CreateRole", "iam:DeleteRole", "iam:UpdateAssumeRolePolicy",
+      "iam:PutRolePolicy", "iam:DeleteRolePolicy",
+      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+      "iam:PutRolePermissionsBoundary",
+      "iam:CreatePolicy", "iam:DeletePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion"
+    ]
+    resources = [
+      "arn:aws:iam::*:role/eks-*",
+      "arn:aws:iam::*:role/staging-eks-*",
+      "arn:aws:iam::*:role/github-actions-eks-deploy",
+      "arn:aws:iam::*:role/staging-github-actions-eks-deploy",
+      "arn:aws:iam::*:role/github-actions-tf-plan",
+      "arn:aws:iam::*:policy/eks-*",
+      "arn:aws:iam::*:policy/staging-eks-*"
+    ]
+  }
+
+
+  statement {
+    sid    = "ProtectApplyRole"
+    effect = "Deny"
+    actions = [
+      "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy",
+      "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"
+    ]
+    resources = ["arn:aws:iam::*:role/github-actions-tf-apply"]
+  }
+}
+
+resource "aws_iam_policy" "tf_apply_scoped" {
+  count  = var.environment == "production" ? 1 : 0
+  name   = "github-actions-tf-apply-scoped"
+  policy = data.aws_iam_policy_document.tf_apply_scoped.json
+}
+
+resource "aws_iam_role_policy_attachment" "tf_apply_scoped" {
+  count      = var.environment == "production" ? 1 : 0
+  role       = aws_iam_role.tf_apply[0].name
+  policy_arn = aws_iam_policy.tf_apply_scoped[0].arn
 }
