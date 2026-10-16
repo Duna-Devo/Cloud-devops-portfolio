@@ -124,11 +124,11 @@ resource "aws_eks_node_group" "main" {
 
   scaling_config {
     desired_size = 2
-    max_size     = 2
+    max_size     = 3
     min_size     = 1
   }
 
-  instance_types = ["t3.micro"]
+  instance_types = ["t3.medium"]
 
   depends_on = [
     aws_iam_role_policy_attachment.node_worker_policy,
@@ -379,4 +379,37 @@ resource "aws_acm_certificate_validation" "app" {
 
 output "certificate_arn" {
   value = aws_acm_certificate_validation.app.certificate_arn
+}
+
+variable "alert_email" {
+  description = "Email address that receives alarm notifications"
+  type        = string
+}
+
+resource "aws_sns_topic" "alerts" {
+  name = "eks-alerts"
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
+  alarm_name          = "eks-node-cpu-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 80
+  alarm_description   = "Average node CPU above 80% for 10 minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    AutoScalingGroupName = aws_eks_node_group.main.resources[0].autoscaling_groups[0].name
+  }
 }
