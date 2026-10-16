@@ -80,6 +80,8 @@ jobs:
         id: deploy
         run: |
           sed -i "s|image: .*stage5-app:.*|image: ${{ needs.build.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          test -n "${{ vars.CERTIFICATE_ARN_STAGING }}" || { echo "CERTIFICATE_ARN_STAGING is not set"; exit 1; }
+          sed -i "s|REPLACE_WITH_CERTIFICATE_ARN|${{ vars.CERTIFICATE_ARN_STAGING }}|" 05-kubernetes-nodes/ingress.yaml
           kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml -f 05-kubernetes-nodes/pdb.yaml -f 05-kubernetes-nodes/hpa.yaml
           kubectl rollout status deployment/stage5-app --timeout=180s
 
@@ -125,6 +127,8 @@ jobs:
         id: deploy
         run: |
           sed -i "s|image: .*stage5-app:.*|image: ${{ needs.build.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          test -n "${{ vars.CERTIFICATE_ARN_PRODUCTION }}" || { echo "CERTIFICATE_ARN_PRODUCTION is not set"; exit 1; }
+          sed -i "s|REPLACE_WITH_CERTIFICATE_ARN|${{ vars.CERTIFICATE_ARN_PRODUCTION }}|" 05-kubernetes-nodes/ingress.yaml
           kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml -f 05-kubernetes-nodes/pdb.yaml -f 05-kubernetes-nodes/hpa.yaml
           kubectl rollout status deployment/stage5-app --timeout=180s
 
