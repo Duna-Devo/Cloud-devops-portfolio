@@ -18,11 +18,12 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: stage5-app
-  EKS_CLUSTER: duna-eks-cluster
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -57,13 +58,73 @@ jobs:
       - name: Push image
         run: docker push ${{ steps.build-image.outputs.image }}
 
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      EKS_CLUSTER: staging-duna-eks-cluster
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/staging-github-actions-eks-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Connect kubectl to the cluster
         run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
 
       - name: Deploy to EKS
         id: deploy
         run: |
-          sed -i "s|image: .*stage5-app:.*|image: ${{ steps.build-image.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          sed -i "s|image: .*stage5-app:.*|image: ${{ needs.build.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
+          kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml -f 05-kubernetes-nodes/pdb.yaml -f 05-kubernetes-nodes/hpa.yaml
+          kubectl rollout status deployment/stage5-app --timeout=180s
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          for i in $(seq 1 30); do
+            HOST=$(kubectl get ingress stage5-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            if [ -n "$HOST" ]; then
+              CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 https://$HOST/ || true)
+              echo "Attempt $i: $HOST returned $CODE"
+              [ "$CODE" = "200" ] && exit 0
+            fi
+            sleep 10
+          done
+          echo "Smoke test failed"
+          exit 1
+
+      - name: Roll back on failure
+        if: steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure'
+        run: kubectl rollout undo deployment/stage5-app
+
+  deploy-production:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      EKS_CLUSTER: duna-eks-cluster
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-eks-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Connect kubectl to the cluster
+        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+
+      - name: Deploy to EKS
+        id: deploy
+        run: |
+          sed -i "s|image: .*stage5-app:.*|image: ${{ needs.build.outputs.image }}|" 05-kubernetes-nodes/deployment.yaml
           kubectl apply -f 05-kubernetes-nodes/deployment.yaml -f 05-kubernetes-nodes/service.yaml -f 05-kubernetes-nodes/ingress.yaml -f 05-kubernetes-nodes/pdb.yaml -f 05-kubernetes-nodes/hpa.yaml
           kubectl rollout status deployment/stage5-app --timeout=180s
 
