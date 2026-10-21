@@ -14,6 +14,8 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["TABLE_NAME"])
 secrets = boto3.client("secretsmanager")
 
+REQUIRE_ORIGIN_VERIFY = os.environ.get("REQUIRE_ORIGIN_VERIFY", "true") == "true"
+
 # Read once per warm container, not on every request.
 _origin_secret = None
 
@@ -42,10 +44,11 @@ def caller_id(event):
 
 def handler(event, context):
     # 1. Only accept requests that came through CloudFront (and therefore WAF).
-    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
-    provided = headers.get("x-origin-verify", "")
-    if not hmac.compare_digest(provided.encode(), get_origin_secret().encode()):
-        return respond(403, {"error": "Forbidden"})
+    if REQUIRE_ORIGIN_VERIFY:
+        headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+        provided = headers.get("x-origin-verify", "")
+        if not hmac.compare_digest(provided.encode(), get_origin_secret().encode()):
+            return respond(403, {"error": "Forbidden"})
 
     # 2. API Gateway already checked the token; we need to know who the user is.
     owner = caller_id(event)

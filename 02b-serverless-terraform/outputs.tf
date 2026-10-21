@@ -1,6 +1,6 @@
 output "api_url" {
   description = "Public API address (custom domain if set, otherwise the CloudFront domain)"
-  value       = local.use_domain ? "https://${var.domain_name}" : "https://${aws_cloudfront_distribution.api.domain_name}"
+  value       = !var.enable_edge ? aws_apigatewayv2_api.http_api.api_endpoint : (local.use_domain ? "https://${var.domain_name}" : "https://${one(aws_cloudfront_distribution.api[*].domain_name)}")
 }
 
 output "user_pool_id" {

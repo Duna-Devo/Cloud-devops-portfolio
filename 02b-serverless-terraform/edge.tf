@@ -4,7 +4,7 @@
 # and the ACM and Route 53 resources below are skipped.
 ############################################
 locals {
-  use_domain        = var.domain_name != ""
+  use_domain        = var.enable_edge && var.domain_name != ""
   api_origin_domain = replace(aws_apigatewayv2_api.http_api.api_endpoint, "https://", "")
 }
 
@@ -44,6 +44,7 @@ resource "aws_acm_certificate_validation" "api" {
 
 # --- WAF: blocks known-bad requests and floods ---
 resource "aws_wafv2_web_acl" "api" {
+  count = var.enable_edge ? 1 : 0
   name  = "${local.name}-waf"
   scope = "CLOUDFRONT"
 
@@ -127,12 +128,13 @@ resource "aws_wafv2_web_acl" "api" {
 
 # --- CloudFront: the public front door ---
 resource "aws_cloudfront_distribution" "api" {
+  count           = var.enable_edge ? 1 : 0
   enabled         = true
   comment         = "${local.name} API front door"
   price_class     = "PriceClass_100"
   http_version    = "http2and3"
   is_ipv6_enabled = true
-  web_acl_id      = aws_wafv2_web_acl.api.arn
+  web_acl_id      = aws_wafv2_web_acl.api[0].arn
   aliases         = local.use_domain ? [var.domain_name] : []
 
   origin {
@@ -188,8 +190,8 @@ resource "aws_route53_record" "api_a" {
   type    = "A"
 
   alias {
-    name                   = aws_cloudfront_distribution.api.domain_name
-    zone_id                = aws_cloudfront_distribution.api.hosted_zone_id
+    name                   = aws_cloudfront_distribution.api[0].domain_name
+    zone_id                = aws_cloudfront_distribution.api[0].hosted_zone_id
     evaluate_target_health = false
   }
 }
@@ -201,8 +203,8 @@ resource "aws_route53_record" "api_aaaa" {
   type    = "AAAA"
 
   alias {
-    name                   = aws_cloudfront_distribution.api.domain_name
-    zone_id                = aws_cloudfront_distribution.api.hosted_zone_id
+    name                   = aws_cloudfront_distribution.api[0].domain_name
+    zone_id                = aws_cloudfront_distribution.api[0].hosted_zone_id
     evaluate_target_health = false
   }
 }

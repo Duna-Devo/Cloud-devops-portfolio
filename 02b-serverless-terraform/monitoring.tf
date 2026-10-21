@@ -12,7 +12,9 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 locals {
-  alarms = {
+  cloudfront_id = one(aws_cloudfront_distribution.api[*].id)
+
+  base_alarms = {
     lambda-errors = {
       description = "Lambda function is throwing errors"
       namespace   = "AWS/Lambda"
@@ -61,15 +63,21 @@ locals {
       threshold   = 1
       dimensions  = { TableName = aws_dynamodb_table.items.name }
     }
+  }
+
+  all_alarms = merge(local.base_alarms, {
     cloudfront-5xx-rate = {
       description = "More than 5% of requests through CloudFront fail with 5xx"
       namespace   = "AWS/CloudFront"
       metric      = "5xxErrorRate"
       statistic   = "Average"
       threshold   = 5
-      dimensions  = { DistributionId = aws_cloudfront_distribution.api.id, Region = "Global" }
+      dimensions  = { DistributionId = local.cloudfront_id, Region = "Global" }
     }
-  }
+  })
+
+  # The CloudFront alarm only exists when the CloudFront front door is enabled.
+  alarms = { for name, alarm in local.all_alarms : name => alarm if var.enable_edge || name != "cloudfront-5xx-rate" }
 }
 
 resource "aws_cloudwatch_metric_alarm" "this" {
