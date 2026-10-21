@@ -85,6 +85,8 @@ resource "aws_lambda_function" "api_handler" {
     variables = {
       TABLE_NAME = aws_dynamodb_table.items.name
       SECRET_ARN = aws_secretsmanager_secret.origin_verify.arn
+      # Only enforced when CloudFront sits in front of the API.
+      REQUIRE_ORIGIN_VERIFY = tostring(var.enable_edge)
     }
   }
 
