@@ -24,6 +24,12 @@ variable "alert_email" {
   type        = string
 }
 
+variable "enable_edge" {
+  description = "Create the public front door (CloudFront, WAF, ACM, Route 53). Keep false while the account cannot create CloudFront distributions; the API is then reached directly at its API Gateway address and the CloudFront header check is turned off."
+  type        = bool
+  default     = false
+}
+
 variable "domain_name" {
   description = "Custom API domain, e.g. api.example.com. Leave empty to use the default CloudFront domain (no Route 53 or ACM resources are created)."
   type        = string
