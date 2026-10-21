@@ -9,7 +9,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Prototype complete; production design validated, not applied |
+| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Deployed live to dev and staging via pipeline; CloudFront and WAF layer written, waiting on AWS account verification |
 | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
@@ -126,7 +126,7 @@ flowchart TB
 
 **Goal:** take a working serverless API and wrap it the way a production team would: authentication, a protected front door, secrets handling, alerting, multiple environments, and a pipeline that tests the API the way a user reaches it and can roll a bad release back.
 
-> **Status: designed and validated, not applied.** The original prototype (API Gateway, Lambda, DynamoDB, least-privilege IAM) was built, tested with `curl`, and torn down. The production layers below are written as Terraform and checked for formatting and syntax. I have not deployed them, because CloudFront, WAF, Cognito and three environments add hourly and monthly cost. Items under "Verify on first apply" are the things I expect to confirm against a real deployment.
+> **Status: deployed live to dev and staging through the pipeline (Oct 21, 2026).** Both smoke tests passed. The production job was gated by an approval and I rejected it on purpose (see Environments). The public front door (Route 53, ACM, CloudFront, WAF) is written in Terraform but **not applied**: CloudFront refused the request with `AccessDenied: Your account must be verified before you can add new CloudFront resources`, an AWS account hold on this new account. Those resources sit behind an `enable_edge` switch that defaults to `false`.
 
 ```mermaid
 flowchart TB
@@ -146,6 +146,8 @@ flowchart TB
     DLQ -.-> CW
 ```
 
+**What is live and what is not.** Applied and tested in dev and staging: Cognito, API Gateway (JWT authorizer), Lambda with the `live` alias, DynamoDB, Secrets Manager, the SQS dead-letter queue, the CloudWatch alarms and the SNS topic. Not applied: Route 53, ACM, CloudFront and WAF (`enable_edge = false`). With the front door off, the API is reached directly at its API Gateway address, the CloudFront header check is switched off in Lambda, and only API Gateway throttling protects it. The diagram below shows the full design.
+
 **Request flow.** The user opens the website or app, signs in, and Cognito returns a token. The app then calls `https://api.example.com` with that token. Route 53 resolves the address to CloudFront, which serves HTTPS and redirects plain HTTP. WAF inspects the request and blocks known-bad traffic and floods. API Gateway checks the token and rejects invalid ones with 401. Valid requests go to the Lambda `live` alias, which verifies the CloudFront secret header (so API Gateway cannot be called directly), then reads or writes DynamoDB. A user can only read or overwrite their own items.
 
 **What is in the Terraform** (`02b-serverless-terraform/`):
@@ -163,19 +165,45 @@ flowchart TB
 
 **Environments.** `dev`, `staging` and `prod` use the same code with `-var="environment=..."` and separate remote state (`serverless/<env>/terraform.tfstate` in S3, lockfile locking). Production gets deletion protection on the table and the user pool and a 30-day secret recovery window.
 
-**Pipeline** (`.github/workflows/serverless.yml`, OIDC, no stored keys): pull requests run format, syntax, validate and a read-only plan. A merge deploys dev, then staging, then production, one at a time. The production job waits for a human approval (GitHub environment with required reviewers). After each apply, the smoke test signs in with a throwaway Cognito user and checks that an unauthenticated call gets 401, a POST saves an item, and a GET returns it. If the smoke test fails, the pipeline points the Lambda `live` alias back at the previous version.
+**Pipeline** (`.github/workflows/serverless.yml`, OIDC, no stored keys): pull requests run a `checks` job (format, Python and shell syntax, `terraform init -backend=false`, `terraform validate`) that needs no AWS access, then a `plan` against dev, which runs when the repo variable `ENABLE_AWS_PLAN` is `true`. A merge to `main` deploys dev, then staging, then production, one at a time. The production job waits for a human approval (GitHub environment with required reviewers). After each apply, the smoke test signs in with a throwaway Cognito user and checks that an unauthenticated call gets 401, a POST saves an item, and a GET returns it. If the smoke test fails, the pipeline points the Lambda `live` alias back at the previous version.
 
-**The bug that shaped this design.** The first version returned a generic 500 on every request. Invoking Lambda directly worked, which showed the code and IAM were fine and isolated the fault to API Gateway: the integration's `payload_format_version` was 2.0 while the handler expected the 1.0 event shape. Fixed by setting it to `"1.0"` (see the comment in `api.tf`). The smoke test now goes through the full public path, so a problem like this fails the deployment instead of reaching users.
+**Result of the live run.** The merge of pull request #25 deployed dev and staging and both smoke tests passed. The production job paused for approval and I rejected it, because production has deletion protection on the table and the user pool and a 30-day secret recovery window, which would block a quick teardown.
 
-**Verify on first apply:**
+![Dev smoke test passing](docs/screenshots/serverless-dev-smoke-test.png)
+![Staging smoke test passing](docs/screenshots/serverless-staging-smoke-test.png)
+![Production deployment rejected at the approval gate](docs/screenshots/serverless-prod-rejected.png)
+
+**Troubleshooting (real failures from this stage):**
+
+1. **Symptom:** the pull request's `plan` job failed with `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`, and none of the code checks ran.
+   **Cause:** the workflow asked for roles named `github-actions-tf-plan` and `github-actions-tf-apply`, which I had copied from a design that was never deployed. They do not exist in the account, and AWS gives the same "not authorized" error for a missing role as for a forbidden one. The existing role's trust policy was fine.
+   **Fix:** point the workflow at the existing `github-actions-terraform-role`, and move format, syntax and `validate` into a separate `checks` job with no AWS sign-in, so code problems show up even when AWS access is broken.
+2. **Symptom:** the first deploy to dev created most resources, then failed with `AccessDenied: Your account must be verified before you can add new CloudFront resources`.
+   **Cause:** an AWS hold on new accounts, not a code error. `terraform plan` had passed, because plan does not ask AWS to create anything.
+   **Fix:** added the `enable_edge` variable (default `false`) so CloudFront, WAF, ACM and Route 53 are skipped, the Lambda header check turns off with it, and the CloudFront alarm is removed. The documented route to re-enable is an AWS Support case under Account and billing, then set the default to `true`.
+3. **Symptom:** (original prototype) every request returned a generic 500. Invoking Lambda directly worked, which isolated the fault to API Gateway: the integration's `payload_format_version` was 2.0 while the handler expected the 1.0 event shape. **Fix:** set it to `"1.0"` (see the comment in `api.tf`). The smoke test now goes through the real request path, so a mismatch like this fails the deployment instead of reaching users.
+
+**Still to verify once the front door is enabled:**
 - CloudFront forwards the `Authorization` header with the managed `AllViewerExceptHostHeader` policy and caching disabled.
-- The pipeline's apply role has permissions for CloudFront, WAF, ACM, Route 53, Cognito, Secrets Manager, SQS and SNS (it was scoped to earlier stages).
+- The WAF rules do not block normal requests, and the rate limit behaves as expected.
+- The ACM certificate and Route 53 records validate (needs a real domain and hosted zone).
 - The SNS email subscription is confirmed from the inbox.
-- Repo variables `ALERT_EMAIL`, `API_DOMAIN_NAME` and `HOSTED_ZONE_ID` are set.
 
-**Known limits:** the dead-letter queue only receives failed asynchronous events, not failed API calls; no reserved concurrency (new accounts have small limits); no dashboard; the custom domain and Route 53 zone are optional and untested; WAF and Cognito carry a monthly cost.
+**Known limits:**
+- The deploy role has `AdministratorAccess` and trusts every repo under my GitHub account. A production setup would use separate, scoped plan and apply roles.
+- The smoke test uses `ADMIN_USER_PASSWORD_AUTH`, which only works with IAM credentials that can call Cognito admin APIs.
+- Production was never deployed, so its protections (deletion protection, 30-day secret recovery) are untested.
+- The dead-letter queue only receives failed asynchronous events, not failed API calls.
+- No reserved Lambda concurrency (new accounts have small limits) and no dashboard.
+- The custom domain, ACM and Route 53 paths are optional and untested.
 
-**Cost note:** nothing here has been deployed; tearing down a deployed environment with `terraform destroy` will prompt for confirmation, and production will refuse until deletion protection is removed.
+**Teardown.** Dev and staging are cheap but still running. To remove one environment (destroy prompts for confirmation):
+```bash
+cd 02b-serverless-terraform
+terraform init -reconfigure -backend-config="key=serverless/dev/terraform.tfstate"
+terraform destroy -var="environment=dev" -var="alert_email=<your email>"
+```
+Repeat with `staging` for the second environment. Production was never created.
 
 
 ## Stage 3 — CI/CD Pipeline (GitHub Actions + Terraform)
