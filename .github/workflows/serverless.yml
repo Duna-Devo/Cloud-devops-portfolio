@@ -1,0 +1,123 @@
+name: Serverless API
+
+on:
+  pull_request:
+    paths:
+      - '02b-serverless-terraform/**'
+      - '.github/workflows/serverless.yml'
+  push:
+    branches: [main]
+    paths:
+      - '02b-serverless-terraform/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_DIR: 02b-serverless-terraform
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+  TF_VAR_domain_name: ${{ vars.API_DOMAIN_NAME }}
+  TF_VAR_hosted_zone_id: ${{ vars.HOSTED_ZONE_ID }}
+
+jobs:
+  # Pull request: check formatting, validate, and show what would change (read-only role).
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-tf-plan
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Format check
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Python syntax check
+        run: python -m py_compile ${{ env.TF_DIR }}/lambda/handler.py
+
+      - name: Shell script check
+        run: bash -n ${{ env.TF_DIR }}/scripts/smoke_test.sh
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -backend-config="key=serverless/dev/terraform.tfstate"
+
+      - name: Validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Plan (dev)
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform plan -lock=false -no-color -input=false -var="environment=dev"
+
+  # Merge to main: dev, then staging, then production (which waits for a human approval).
+  deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1 # one environment at a time, in this order
+      fail-fast: true # if dev or staging fails, later environments never run
+      matrix:
+        env: [dev, staging, prod]
+    # "production" has Required reviewers set in repo Settings > Environments,
+    # so the prod job pauses here until someone approves it.
+    environment: ${{ matrix.env == 'prod' && 'production' || matrix.env }}
+    concurrency: serverless-${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/github-actions-tf-apply
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -backend-config="key=serverless/${{ matrix.env }}/terraform.tfstate"
+
+      # Remember which Lambda version is live now, so we can go back to it.
+      - name: Record current live version
+        id: prev
+        run: |
+          prev="$(aws lambda get-alias --function-name "serverless-${{ matrix.env }}-handler" \
+            --name live --query FunctionVersion --output text 2>/dev/null || echo none)"
+          echo "version=$prev" >> "$GITHUB_OUTPUT"
+
+      - name: Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve -input=false -var="environment=${{ matrix.env }}"
+
+      - name: Read outputs
+        id: out
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "api_url=$(terraform output -raw api_url)" >> "$GITHUB_OUTPUT"
+          echo "pool=$(terraform output -raw user_pool_id)" >> "$GITHUB_OUTPUT"
+          echo "client=$(terraform output -raw user_pool_client_id)" >> "$GITHUB_OUTPUT"
+
+      # Test from the user's side: through the public address, not the pods or the function.
+      - name: Smoke test
+        env:
+          API_URL: ${{ steps.out.outputs.api_url }}
+          USER_POOL_ID: ${{ steps.out.outputs.pool }}
+          CLIENT_ID: ${{ steps.out.outputs.client }}
+        run: bash ${{ env.TF_DIR }}/scripts/smoke_test.sh
+
+      # If the smoke test fails, point the live alias back at the previous version.
+      # (Terraform state will differ until the next successful apply; that is expected.)
+      - name: Roll back Lambda
+        if: failure() && steps.prev.outputs.version != 'none' && steps.prev.outputs.version != ''
+        run: |
+          aws lambda update-alias --function-name "serverless-${{ matrix.env }}-handler" \
+            --name live --function-version "${{ steps.prev.outputs.version }}"
+          echo "Rolled back to version ${{ steps.prev.outputs.version }}"
