@@ -9,7 +9,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
+| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Prototype complete; production design validated, not applied |
 | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
@@ -122,24 +122,60 @@ flowchart TB
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
 
 
-## Stage 2b — Serverless API; Terraform (Lambda + API Gateway + DynamoDB)
+## Stage 2b — Serverless API; Terraform (production design)
 
-**Goal:** build a small, fully working web API with no servers to manage — proving understanding of the serverless pattern and applying the same least-privilege IAM discipline used in every previous stage.
+**Goal:** take a working serverless API and wrap it the way a production team would: authentication, a protected front door, secrets handling, alerting, multiple environments, and a pipeline that tests the API the way a user reaches it and can roll a bad release back.
 
-**What was built:** a DynamoDB table (pay-per-request), a Python Lambda function using Boto3 to read/write it, an IAM role scoped to exactly two actions (`PutItem`, `GetItem`) on exactly one table, and an HTTP API Gateway wired to trigger the function — all defined and deployed via Terraform.
+> **Status: designed and validated, not applied.** The original prototype (API Gateway, Lambda, DynamoDB, least-privilege IAM) was built, tested with `curl`, and torn down. The production layers below are written as Terraform and checked for formatting and syntax. I have not deployed them, because CloudFront, WAF, Cognito and three environments add hourly and monthly cost. Items under "Verify on first apply" are the things I expect to confirm against a real deployment.
 
 ```mermaid
 flowchart TB
-    Client((You / client)) --> APIGW[API Gateway]
-    APIGW --> Lambda[Lambda function]
-    Lambda --> DDB[(DynamoDB)]
+    User((User: web or mobile app)) -->|HTTPS| R53[Route 53<br/>api.example.com]
+    R53 --> CF[CloudFront<br/>HTTP redirected to HTTPS, ACM certificate]
+    WAF[WAF<br/>managed rules, rate limit] -.attached to.-> CF
+    CF -->|adds secret header| APIGW[API Gateway HTTP API<br/>JWT authorizer]
+    Cognito[Cognito user pool<br/>sign-in and tokens] -.verifies token.-> APIGW
+    APIGW -->|live alias| Lambda[Lambda<br/>Python, X-Ray]
+    Lambda --> DDB[(DynamoDB<br/>encrypted, point-in-time recovery)]
+    Lambda -.reads secret.-> SM[Secrets Manager]
+    Lambda -.failed async events.-> DLQ[SQS dead-letter queue]
+    CW[CloudWatch alarms] --> SNS[SNS email alerts]
+    Lambda -.-> CW
+    APIGW -.-> CW
+    CF -.-> CW
+    DLQ -.-> CW
 ```
 
-**Real bug diagnosed and fixed:** initial requests returned a generic "Internal Server Error" with no obvious cause. Diagnosed methodically — confirmed the Lambda permission, the API Gateway integration, and the route were all correctly configured, then invoked Lambda directly (bypassing API Gateway) to isolate the failure to one specific layer. Direct invocation succeeded, proving the Lambda code and IAM permissions were correct — narrowing the bug to how API Gateway was formatting the request. Root cause: a mismatch between the integration's `payload_format_version` (set to 2.0) and the Lambda code, which was written expecting version 1.0's event shape (`event['httpMethod']` at the top level, rather than version 2.0's nested `event['requestContext']['http']['method']`). Fixed by aligning the integration to `payload_format_version = "1.0"`.
+**Request flow.** The user opens the website or app, signs in, and Cognito returns a token. The app then calls `https://api.example.com` with that token. Route 53 resolves the address to CloudFront, which serves HTTPS and redirects plain HTTP. WAF inspects the request and blocks known-bad traffic and floods. API Gateway checks the token and rejects invalid ones with 401. Valid requests go to the Lambda `live` alias, which verifies the CloudFront secret header (so API Gateway cannot be called directly), then reads or writes DynamoDB. A user can only read or overwrite their own items.
 
-**Verified end to end:** POST request saves an item to DynamoDB; GET request fetches that same item back — confirmed via `curl` against the live API endpoint.
+**What is in the Terraform** (`02b-serverless-terraform/`):
 
-**Files:** see `02b-serverless-terraform/main.tf` for the full Terraform configuration and `02b-serverless-terraform/lambda/handler.py` for the function code.
+| File | Contents |
+|---|---|
+| `data.tf` | DynamoDB (encryption, point-in-time recovery, deletion protection in prod), SQS dead-letter queue, Secrets Manager secret |
+| `lambda.tf` | Lambda (versions, `live` alias, X-Ray, dead-letter config), least-privilege IAM role, log group |
+| `auth.tf` | Cognito user pool (12-character passwords, optional MFA) and app client |
+| `api.tf` | HTTP API, JWT authorizer, throttling, access logs |
+| `edge.tf` | ACM certificate, WAF, CloudFront, Route 53 records (skipped when no domain is set) |
+| `monitoring.tf` | Seven CloudWatch alarms, SNS topic with email subscription |
+| `lambda/handler.py` | Input validation, per-user ownership, secret check, no leaked errors |
+| `scripts/smoke_test.sh` | Post-deploy test through the public address |
+
+**Environments.** `dev`, `staging` and `prod` use the same code with `-var="environment=..."` and separate remote state (`serverless/<env>/terraform.tfstate` in S3, lockfile locking). Production gets deletion protection on the table and the user pool and a 30-day secret recovery window.
+
+**Pipeline** (`.github/workflows/serverless.yml`, OIDC, no stored keys): pull requests run format, syntax, validate and a read-only plan. A merge deploys dev, then staging, then production, one at a time. The production job waits for a human approval (GitHub environment with required reviewers). After each apply, the smoke test signs in with a throwaway Cognito user and checks that an unauthenticated call gets 401, a POST saves an item, and a GET returns it. If the smoke test fails, the pipeline points the Lambda `live` alias back at the previous version.
+
+**The bug that shaped this design.** The first version returned a generic 500 on every request. Invoking Lambda directly worked, which showed the code and IAM were fine and isolated the fault to API Gateway: the integration's `payload_format_version` was 2.0 while the handler expected the 1.0 event shape. Fixed by setting it to `"1.0"` (see the comment in `api.tf`). The smoke test now goes through the full public path, so a problem like this fails the deployment instead of reaching users.
+
+**Verify on first apply:**
+- CloudFront forwards the `Authorization` header with the managed `AllViewerExceptHostHeader` policy and caching disabled.
+- The pipeline's apply role has permissions for CloudFront, WAF, ACM, Route 53, Cognito, Secrets Manager, SQS and SNS (it was scoped to earlier stages).
+- The SNS email subscription is confirmed from the inbox.
+- Repo variables `ALERT_EMAIL`, `API_DOMAIN_NAME` and `HOSTED_ZONE_ID` are set.
+
+**Known limits:** the dead-letter queue only receives failed asynchronous events, not failed API calls; no reserved concurrency (new accounts have small limits); no dashboard; the custom domain and Route 53 zone are optional and untested; WAF and Cognito carry a monthly cost.
+
+**Cost note:** nothing here has been deployed; tearing down a deployed environment with `terraform destroy` will prompt for confirmation, and production will refuse until deletion protection is removed.
 
 
 ## Stage 3 — CI/CD Pipeline (GitHub Actions + Terraform)
@@ -190,7 +226,7 @@ AWS resources after the first failed destroy attempt.
 
 ## Stage 3b — CI/CD Pipeline (Jenkins on EC2 + Terraform)
 
-**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the Stage 2b serverless API, to learn what a self-hosted CI/CD server costs in setup and upkeep.
+**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the original Stage 2b serverless API prototype (before the production design above), to learn what a self-hosted CI/CD server costs in setup and upkeep.
 
 **What was built:** a Jenkins server (2.580.1) on a single EC2 instance (t3.small, Amazon Linux 2023), provisioned entirely with Terraform and stored in the S3 remote backend with lockfile locking. The security group opens port 8080 to my IP only, and the server has no SSH key, reached only through SSM Session Manager. Jenkins runs with Java 21, plus Git and Terraform installed on the server. A `Jenkinsfile` (checkout, init, validate, plan, manual approval, apply) is loaded by a Jenkins job using "Pipeline script from SCM", so the pipeline lives in the repo like the Stage 3 workflow.
 
