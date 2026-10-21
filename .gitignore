@@ -6,3 +6,4 @@
 *.key
 .env
 credentials
+build/
