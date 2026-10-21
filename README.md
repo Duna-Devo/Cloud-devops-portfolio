@@ -9,11 +9,11 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM | Complete |
+| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Prototype complete; production design validated, not applied |
 | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
-| Kubernetes (node-based) | EKS platform — node-based cluster | Complete |
+| Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
 | Kubernetes (Fargate) | EKS platform — re-deployed on Fargate for comparison | Planned |
 | Observability | Monitoring & SRE practices | Planned |
 
@@ -122,24 +122,60 @@ flowchart TB
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
 
 
-## Stage 2b — Serverless API; Terraform (Lambda + API Gateway + DynamoDB)
+## Stage 2b — Serverless API; Terraform (production design)
 
-**Goal:** build a small, fully working web API with no servers to manage — proving understanding of the serverless pattern and applying the same least-privilege IAM discipline used in every previous stage.
+**Goal:** take a working serverless API and wrap it the way a production team would: authentication, a protected front door, secrets handling, alerting, multiple environments, and a pipeline that tests the API the way a user reaches it and can roll a bad release back.
 
-**What was built:** a DynamoDB table (pay-per-request), a Python Lambda function using Boto3 to read/write it, an IAM role scoped to exactly two actions (`PutItem`, `GetItem`) on exactly one table, and an HTTP API Gateway wired to trigger the function — all defined and deployed via Terraform.
+> **Status: designed and validated, not applied.** The original prototype (API Gateway, Lambda, DynamoDB, least-privilege IAM) was built, tested with `curl`, and torn down. The production layers below are written as Terraform and checked for formatting and syntax. I have not deployed them, because CloudFront, WAF, Cognito and three environments add hourly and monthly cost. Items under "Verify on first apply" are the things I expect to confirm against a real deployment.
 
 ```mermaid
 flowchart TB
-    Client((You / client)) --> APIGW[API Gateway]
-    APIGW --> Lambda[Lambda function]
-    Lambda --> DDB[(DynamoDB)]
+    User((User: web or mobile app)) -->|HTTPS| R53[Route 53<br/>api.example.com]
+    R53 --> CF[CloudFront<br/>HTTP redirected to HTTPS, ACM certificate]
+    WAF[WAF<br/>managed rules, rate limit] -.attached to.-> CF
+    CF -->|adds secret header| APIGW[API Gateway HTTP API<br/>JWT authorizer]
+    Cognito[Cognito user pool<br/>sign-in and tokens] -.verifies token.-> APIGW
+    APIGW -->|live alias| Lambda[Lambda<br/>Python, X-Ray]
+    Lambda --> DDB[(DynamoDB<br/>encrypted, point-in-time recovery)]
+    Lambda -.reads secret.-> SM[Secrets Manager]
+    Lambda -.failed async events.-> DLQ[SQS dead-letter queue]
+    CW[CloudWatch alarms] --> SNS[SNS email alerts]
+    Lambda -.-> CW
+    APIGW -.-> CW
+    CF -.-> CW
+    DLQ -.-> CW
 ```
 
-**Real bug diagnosed and fixed:** initial requests returned a generic "Internal Server Error" with no obvious cause. Diagnosed methodically — confirmed the Lambda permission, the API Gateway integration, and the route were all correctly configured, then invoked Lambda directly (bypassing API Gateway) to isolate the failure to one specific layer. Direct invocation succeeded, proving the Lambda code and IAM permissions were correct — narrowing the bug to how API Gateway was formatting the request. Root cause: a mismatch between the integration's `payload_format_version` (set to 2.0) and the Lambda code, which was written expecting version 1.0's event shape (`event['httpMethod']` at the top level, rather than version 2.0's nested `event['requestContext']['http']['method']`). Fixed by aligning the integration to `payload_format_version = "1.0"`.
+**Request flow.** The user opens the website or app, signs in, and Cognito returns a token. The app then calls `https://api.example.com` with that token. Route 53 resolves the address to CloudFront, which serves HTTPS and redirects plain HTTP. WAF inspects the request and blocks known-bad traffic and floods. API Gateway checks the token and rejects invalid ones with 401. Valid requests go to the Lambda `live` alias, which verifies the CloudFront secret header (so API Gateway cannot be called directly), then reads or writes DynamoDB. A user can only read or overwrite their own items.
 
-**Verified end to end:** POST request saves an item to DynamoDB; GET request fetches that same item back — confirmed via `curl` against the live API endpoint.
+**What is in the Terraform** (`02b-serverless-terraform/`):
 
-**Files:** see `02b-serverless-terraform/main.tf` for the full Terraform configuration and `02b-serverless-terraform/lambda/handler.py` for the function code.
+| File | Contents |
+|---|---|
+| `data.tf` | DynamoDB (encryption, point-in-time recovery, deletion protection in prod), SQS dead-letter queue, Secrets Manager secret |
+| `lambda.tf` | Lambda (versions, `live` alias, X-Ray, dead-letter config), least-privilege IAM role, log group |
+| `auth.tf` | Cognito user pool (12-character passwords, optional MFA) and app client |
+| `api.tf` | HTTP API, JWT authorizer, throttling, access logs |
+| `edge.tf` | ACM certificate, WAF, CloudFront, Route 53 records (skipped when no domain is set) |
+| `monitoring.tf` | Seven CloudWatch alarms, SNS topic with email subscription |
+| `lambda/handler.py` | Input validation, per-user ownership, secret check, no leaked errors |
+| `scripts/smoke_test.sh` | Post-deploy test through the public address |
+
+**Environments.** `dev`, `staging` and `prod` use the same code with `-var="environment=..."` and separate remote state (`serverless/<env>/terraform.tfstate` in S3, lockfile locking). Production gets deletion protection on the table and the user pool and a 30-day secret recovery window.
+
+**Pipeline** (`.github/workflows/serverless.yml`, OIDC, no stored keys): pull requests run format, syntax, validate and a read-only plan. A merge deploys dev, then staging, then production, one at a time. The production job waits for a human approval (GitHub environment with required reviewers). After each apply, the smoke test signs in with a throwaway Cognito user and checks that an unauthenticated call gets 401, a POST saves an item, and a GET returns it. If the smoke test fails, the pipeline points the Lambda `live` alias back at the previous version.
+
+**The bug that shaped this design.** The first version returned a generic 500 on every request. Invoking Lambda directly worked, which showed the code and IAM were fine and isolated the fault to API Gateway: the integration's `payload_format_version` was 2.0 while the handler expected the 1.0 event shape. Fixed by setting it to `"1.0"` (see the comment in `api.tf`). The smoke test now goes through the full public path, so a problem like this fails the deployment instead of reaching users.
+
+**Verify on first apply:**
+- CloudFront forwards the `Authorization` header with the managed `AllViewerExceptHostHeader` policy and caching disabled.
+- The pipeline's apply role has permissions for CloudFront, WAF, ACM, Route 53, Cognito, Secrets Manager, SQS and SNS (it was scoped to earlier stages).
+- The SNS email subscription is confirmed from the inbox.
+- Repo variables `ALERT_EMAIL`, `API_DOMAIN_NAME` and `HOSTED_ZONE_ID` are set.
+
+**Known limits:** the dead-letter queue only receives failed asynchronous events, not failed API calls; no reserved concurrency (new accounts have small limits); no dashboard; the custom domain and Route 53 zone are optional and untested; WAF and Cognito carry a monthly cost.
+
+**Cost note:** nothing here has been deployed; tearing down a deployed environment with `terraform destroy` will prompt for confirmation, and production will refuse until deletion protection is removed.
 
 
 ## Stage 3 — CI/CD Pipeline (GitHub Actions + Terraform)
@@ -190,7 +226,7 @@ AWS resources after the first failed destroy attempt.
 
 ## Stage 3b — CI/CD Pipeline (Jenkins on EC2 + Terraform)
 
-**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the Stage 2b serverless API, to learn what a self-hosted CI/CD server costs in setup and upkeep.
+**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the original Stage 2b serverless API prototype (before the production design above), to learn what a self-hosted CI/CD server costs in setup and upkeep.
 
 **What was built:** a Jenkins server (2.580.1) on a single EC2 instance (t3.small, Amazon Linux 2023), provisioned entirely with Terraform and stored in the S3 remote backend with lockfile locking. The security group opens port 8080 to my IP only, and the server has no SSH key, reached only through SSM Session Manager. Jenkins runs with Java 21, plus Git and Terraform installed on the server. A `Jenkinsfile` (checkout, init, validate, plan, manual approval, apply) is loaded by a Jenkins job using "Pipeline script from SCM", so the pipeline lives in the repo like the Stage 3 workflow.
 
@@ -259,35 +295,70 @@ flowchart TB
 **Teardown:** deleted resources in dependency order — ECS service scaled to zero then deleted, ECS cluster deleted, ALB listener deleted before target groups (listener holds a reference to the target group; deleting out of order returns a ResourceInUse error), Blue and Green target groups deleted, ECR repository force-deleted including all images, IAM access key deleted before IAM user (AWS blocks user deletion until all access keys are removed), IAM role and attached policies deleted, ALB security group deleted. Root cause of most teardown errors: resources that reference other resources must be removed before the thing they reference.
 
 
+## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
-## Stage 5 — Kubernetes (EKS)
+**Goal:** deploy the Stage 4 Flask app onto Amazon EKS, demonstrate Kubernetes' self-healing, and automate releases with a pipeline that scans the image, promotes it from staging to production, and rolls back a failed rollout.
 
-**Goal:** deploy the same containerized application from Stage 4 onto Amazon EKS instead of ECS Fargate, comparing Kubernetes-native orchestration against AWS's managed container service, and demonstrate Kubernetes' self-healing behavior firsthand.
+**Status:** the core platform (VPC, EKS, node group, ECR, OIDC pipeline, rollback) was built and verified live. The hardening layers (private networking, ALB with HTTPS, autoscaling, alerting, staging, Terraform pipeline) are written and checked with `terraform validate`, but have not been applied.
 
-**What was built:** a dedicated VPC (`10.1.0.0/16`) with 2 public subnets across 2 AZs, an Internet Gateway and routing, IAM roles for the EKS control plane and worker nodes (least-privilege, AWS-managed policies), an EKS cluster (`duna-eks-cluster`), and a managed node group (2x t3.micro EC2 workers). The Stage 4 Flask app image was rebuilt and pushed to a new ECR repository, then deployed via a Kubernetes Deployment (2 replicas) and exposed through a Service of type `LoadBalancer`, which automatically provisioned an AWS load balancer.
+**What was built:** a dedicated VPC (`10.1.0.0/16`) with public subnets for load balancers and private subnets for nodes across 2 AZs, with one NAT Gateway per AZ so losing one zone does not cut off the other. Least-privilege IAM roles, an EKS cluster (`duna-eks-cluster`), and a managed node group (t3.medium, desired 2, maximum 3). The app image lives in ECR and runs as a Deployment (2 replicas) with readiness and liveness probes and CPU and memory limits, behind a `ClusterIP` Service and an ALB Ingress. Terraform installs the AWS Load Balancer Controller, metrics-server and Cluster Autoscaler through Helm releases, each with its own IAM role scoped to one service account. HTTPS uses an ACM certificate validated through Route 53, with HTTP redirected. A PodDisruptionBudget keeps one pod up during maintenance, and a HorizontalPodAutoscaler scales 2 to 4 pods at 70% CPU. Monitoring combines the CloudWatch Container Insights add-on with a CloudWatch alarm on node CPU that sends SNS email alerts. The Terraform apply role uses a scoped policy in place of `AdministratorAccess` and cannot modify itself. State is stored in S3 (`duna-eks-tfstate`) with `use_lockfile` locking.
 
 ```mermaid
-flowchart TB
-    Internet((Internet)) --> LB[Load balancer]
-    subgraph EKS["EKS cluster (control plane)"]
-        LB --> NG["Node group (2x t3.micro EC2 workers)"]
-        subgraph NG
-            Pod1[Pod: app replica 1]
-            Pod2[Pod: app replica 2]
-        end
+flowchart LR
+  dev[Developer push to main] --> gha[GitHub Actions]
+  gha -->|OIDC| iam[IAM deploy role]
+  gha --> build[Build + Trivy scan]
+  build --> ecr[(ECR)]
+  ecr --> stg[Deploy to staging]
+  stg -->|smoke test + rollback| appr{Production approval}
+  appr --> prod[Deploy to production]
+
+  subgraph VPC[VPC 10.1.0.0/16]
+    subgraph pub[Public subnets - 2 AZs]
+      alb[ALB + HTTPS - ACM cert]
+      nat_a[NAT Gateway AZ a]
+      nat_b[NAT Gateway AZ b]
     end
+    subgraph priv[Private subnets - 2 AZs]
+      subgraph eks[EKS cluster]
+        pods[App pods x2-4 - HPA + PDB]
+      end
+    end
+  end
+
+  user[Users] --> r53[Route 53] --> alb
+  alb --> pods
+  pods -.->|AZ a egress| nat_a
+  pods -.->|AZ b egress| nat_b
+  helm[Helm releases - LB controller, metrics-server, Cluster Autoscaler] --> eks
+  prod --> eks
+  cw[CloudWatch alarm] --> sns[SNS email]
+  eks -.-> cw
+  ci[Container Insights add-on] -.-> cw
 ```
 
-**Remote state:** migrated from local to an S3 backend (`duna-eks-tfstate`) partway through the build, using Terraform's newer `use_lockfile` locking method rather than a separate DynamoDB lock table.
 
-**Real bug diagnosed and fixed:** after deploying, the load balancer returned an empty reply on every request. The pods themselves were healthy and running. Checked the pod logs directly and found the Flask app was listening on port 5000, not port 80 — the Deployment and Service manifests had both been written assuming port 80. Fixed by aligning `containerPort` and `targetPort` to 5000 in both manifests, keeping the Service's external port at 80 for a clean public-facing URL. Re-verified via curl against the load balancer's DNS name.
+**CI/CD pipeline:** a workflow (`.github/workflows/eks-deploy.yml`) runs on every push to `05-kubernetes-nodes/app/` or the manifests. It authenticates through OIDC into a Terraform-defined role limited to pushing to one ECR repo, describing the cluster, and editing the `default` namespace, so no AWS keys are stored. The trust policy matches the exact repo and branch, with no wildcards. It builds the image tagged with the commit SHA, scans it with Trivy (critical and high findings with a fix fail the build), pushes it, deploys to staging, and runs an HTTPS smoke test. If the rollout or the test fails, it runs `kubectl rollout undo`. The same image then goes to production behind a GitHub `production` environment approval, with the same smoke test and rollback.
 
-**Break/fix exercise:** deliberately deleted a running pod (`kubectl delete pod`) to test Kubernetes' self-healing. The Deployment detected the replica count had dropped below the desired 2 and automatically scheduled a replacement pod within seconds, with no manual intervention. Confirmed via curl that the app remained reachable throughout, since the Service continued routing traffic to the surviving pod while the replacement started.
+**Infrastructure pipeline:** a second workflow (`.github/workflows/terraform.yml`) runs format check, validate and plan on pull requests under a read-only role, and apply on merge under a separate role that only the `production` environment can assume. Staging uses the same code through an `environment` variable (name prefix and VPC CIDR) and its own state key.
 
-**ECS vs. EKS:** ECS is simpler to operate and fully AWS-native, with no separate control-plane fee. EKS costs a flat $0.10/hour for the control plane regardless of usage, with no free tier, but is the more portable and widely-requested skill across DevOps job postings — supporting multi-cloud and hybrid setups that ECS cannot.
+Real bugs diagnosed and fixed:
 
-**Verified end to end:** `kubectl get nodes` confirmed both worker nodes `Ready`, `kubectl get pods` confirmed both app replicas `Running`, and curl against the load balancer's DNS name returned the app's expected JSON response.
+1. Empty replies from the load balancer — pod logs showed Flask listening on port 5000 while the manifests assumed port 80. Aligned `containerPort` and `targetPort` to 5000 and kept the Service's external port at 80.
+2. Pipeline never ran — the workflow file sat in a nested `.github/workflows/.github/workflows/` folder, and GitHub only reads workflows in `.github/workflows/`. Moved it to the correct path.
+3. Rollout failed on node capacity — a new pod stayed `Pending` with `0/2 nodes are available: 2 Too many pods`, because the t3.micro nodes had no spare slot for a rolling update. The pipeline rolled back automatically and the app kept answering. Fixed with `maxSurge: 0` and `maxUnavailable: 1`, and later moved to t3.medium nodes.
+4. OIDC trust too broad — the first trust policy used wildcards that would also have matched look-alike repo names. Replaced with exact matches.
 
-**Files:** see `05-kubernetes-nodes/main.tf` for the full Terraform configuration and `05-kubernetes-nodes/deployment.yaml`, `service.yaml` for the Kubernetes manifests.
+**Break/fix exercise:** deleted a running pod on purpose. The Deployment scheduled a replacement within seconds, and the app stayed reachable through the surviving pod.
 
-**Teardown:** ran `terraform destroy` without first deleting the Kubernetes Service, which left a load balancer running after the cluster itself was already gone — a resource Terraform doesn't track since Kubernetes, not Terraform, created it. The load balancer's network interface blocked deletion of one subnet, the Internet Gateway, and ultimately the VPC itself. Diagnosed methodically: confirmed via `aws elbv2 describe-load-balancers` that no modern (ALB/NLB) load balancer existed, then checked the older `aws elb describe-load-balancers` API and found the actual object there — Kubernetes' in-tree cloud provider had provisioned a **Classic Load Balancer**, a legacy AWS resource type invisible to the newer API. Deleted it directly (`aws elb delete-load-balancer`), which released the stuck network interface, then cleared one remaining orphaned security group before re-running `terraform destroy` successfully. Lesson for future stages: run `kubectl delete service` before `terraform destroy` whenever a Kubernetes Service of type `LoadBalancer` is involved, and remember that Kubernetes-provisioned AWS load balancers may be Classic ELBs, not ALBs/NLBs — check both APIs when troubleshooting.
+**Verified end to end (v1):** both nodes `Ready`, both replicas `Running`, and a pushed change (version 1.5) went live with no manual commands. The failed run also verified the rollback on a real failure.
+
+**ECS vs. EKS:** ECS is simpler and AWS-native with no control-plane fee. EKS costs $0.10/hour for the control plane, but it is the more portable and widely requested skill.
+
+**Teardown:** `terraform destroy` run before deleting the Kubernetes Service left a Kubernetes-created Classic Load Balancer behind, which blocked the subnet, Internet Gateway, and VPC deletion. It was invisible to `aws elbv2` and only appeared under `aws elb`. Deleted it directly, then re-ran the destroy. Lesson: delete the Service before `terraform destroy`, and check both load balancer APIs.
+
+**Needed to run the full design:** the domain, hosted zone and alert email passed as Terraform variables, the `CERTIFICATE_ARN_STAGING` and `CERTIFICATE_ARN_PRODUCTION` repository variables set from `terraform output certificate_arn` after the first apply, and required reviewers on the `production` environment. On a fresh account the first apply runs in two steps (`-target=aws_eks_cluster.main`, then a full apply) because the Helm and Kubernetes providers need the cluster to exist.
+
+**Next steps:** attach the permissions boundary to every role Terraform creates so it is enforced, and refine the apply policy from real plan output, since it is a least-privilege starting point and has not been exercised against a live apply.
+
+**Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `ingress.yaml`, `pdb.yaml`, `hpa.yaml`, `iam_policy.json`, `app/`, `.github/workflows/eks-deploy.yml`, and `.github/workflows/terraform.yml`.
