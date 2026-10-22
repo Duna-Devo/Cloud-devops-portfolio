@@ -26,41 +26,15 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 - VM2 & VM3 (private): no public IP at all. SSH access restricted to VM1's private IP only, via security group rules.
 
 ```mermaid
-flowchart LR
-    User(("User<br/>web or mobile app"))
-    Cognito["Cognito user pool<br/>accounts, sign-in, tokens"]
-
-    subgraph EDGE["Front door (written, not applied: enable_edge = false)"]
-        direction TB
-        R53["Route 53<br/>api.example.com"]
-        CF["CloudFront<br/>HTTPS, ACM certificate,<br/>adds secret header"]
-        WAF["WAF<br/>managed rules, rate limit"]
-        R53 --> CF
-        WAF -.-> CF
+flowchart TB
+    You((You / laptop)) -.SSM.-> VM1[VM1 — public entry point]
+    subgraph Private["Private network — no internet exposure"]
+        VM2[VM2 — runs nginx]
+        VM3[VM3 — fetches VM2's page]
     end
-
-    subgraph CORE["API (deployed and tested)"]
-        direction TB
-        APIGW["API Gateway HTTP API<br/>JWT authorizer, throttling"]
-        Lambda["Lambda, live alias<br/>Python, X-Ray"]
-        DDB[("DynamoDB<br/>encrypted, PITR")]
-        SM["Secrets Manager<br/>origin secret"]
-        DLQ["SQS dead-letter queue"]
-        APIGW --> Lambda
-        Lambda --> DDB
-        Lambda -.-> SM
-        Lambda -.-> DLQ
-    end
-
-    CW["CloudWatch alarms"] --> SNS["SNS email alerts"]
-
-    User <-->|"1. sign in, 2. token back"| Cognito
-    User -->|"3. request + token (HTTPS)"| R53
-    CF -->|"4. forward + secret header"| APIGW
-    Cognito -.->|"5. token checked"| APIGW
-    CORE -.->|"metrics, logs"| CW
-
-    style EDGE stroke-dasharray: 6 4
+    VM1 -.SSH.-> VM2
+    VM1 -.SSH.-> VM3
+    VM3 -->|curl| VM2
 ```
 
 **Real issue hit and resolved:**
