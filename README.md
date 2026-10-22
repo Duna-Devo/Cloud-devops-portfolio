@@ -9,7 +9,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
 | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Deployed live to dev and staging via pipeline; CloudFront and WAF layer written, waiting on AWS account verification |
+| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Complete |
 | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
