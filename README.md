@@ -160,10 +160,6 @@ flowchart TB
 
 **Verified end to end:** the merge of PR #25 deployed dev and staging, and both smoke tests passed. The prod job paused for approval and I rejected it, since prod's deletion protection and secret recovery window would have blocked a quick teardown.
 
-![Dev smoke test passing](docs/screenshots/serverless-dev-smoke-test.png)
-![Staging smoke test passing](docs/screenshots/serverless-staging-smoke-test.png)
-![Production deployment rejected at the approval gate](docs/screenshots/serverless-prod-rejected.png)
-
 **Teardown:** ran `terraform destroy` for dev and staging separately (`terraform init -reconfigure -backend-config="key=serverless/<env>/terraform.tfstate"`, then destroy with the matching `environment`). Staging removed 27 resources cleanly. Production was never created. Lesson: re-initialise against the right state key before each destroy, or it targets the wrong environment.
 
 **Not production-grade yet:**
