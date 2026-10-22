@@ -61,7 +61,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::010429757460:role/github-actions-terraform-role
+          role-to-assume: arn:aws:iam::010429757460:role/serverless-plan
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
@@ -92,7 +92,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::010429757460:role/github-actions-terraform-role
+          role-to-assume: arn:aws:iam::010429757460:role/serverless-apply
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
