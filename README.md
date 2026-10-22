@@ -126,7 +126,7 @@ flowchart TB
 
 **Goal:** take a working serverless API and wrap it the way a production team would: authentication, a protected front door, secrets handling, alerting, three environments, and a pipeline that tests the API the way a user reaches it and rolls a bad release back.
 
-**Status:** the core API was deployed live to dev and staging through the pipeline and verified, then destroyed. Production was gated and rejected on purpose. The front-door layer (Route 53, ACM, CloudFront, WAF) is written and validated but was not applied, because AWS blocked CloudFront on this new account.
+**Status:** the core API was deployed live to dev and staging through the pipeline and verified, then destroyed. Production was gated and rejected on purpose.
 
 ```mermaid
 flowchart TB
