@@ -129,21 +129,41 @@ flowchart TB
 **Status:** the core API was deployed live to dev and staging through the pipeline and verified, then destroyed. Production was gated and rejected on purpose.
 
 ```mermaid
-flowchart TB
-    User((User: web or mobile app)) -->|HTTPS| R53[Route 53<br/>api.example.com]
-    R53 --> CF[CloudFront<br/>HTTP redirected to HTTPS, ACM certificate]
-    WAF[WAF<br/>managed rules, rate limit] -.attached to.-> CF
-    CF -->|adds secret header| APIGW[API Gateway HTTP API<br/>JWT authorizer]
-    Cognito[Cognito user pool<br/>sign-in and tokens] -.verifies token.-> APIGW
-    APIGW -->|live alias| Lambda[Lambda<br/>Python, X-Ray]
-    Lambda --> DDB[(DynamoDB<br/>encrypted, point-in-time recovery)]
-    Lambda -.reads secret.-> SM[Secrets Manager]
-    Lambda -.failed async events.-> DLQ[SQS dead-letter queue]
-    CW[CloudWatch alarms] --> SNS[SNS email alerts]
-    Lambda -.-> CW
-    APIGW -.-> CW
-    CF -.-> CW
-    DLQ -.-> CW
+flowchart LR
+    User(("User<br/>web or mobile app"))
+    Cognito["Cognito user pool<br/>accounts, sign-in, tokens"]
+
+    subgraph EDGE["Front door (written, not applied: enable_edge = false)"]
+        direction TB
+        R53["Route 53<br/>api.example.com"]
+        CF["CloudFront<br/>HTTPS, ACM certificate,<br/>adds secret header"]
+        WAF["WAF<br/>managed rules, rate limit"]
+        R53 --> CF
+        WAF -.-> CF
+    end
+
+    subgraph CORE["API (deployed and tested)"]
+        direction TB
+        APIGW["API Gateway HTTP API<br/>JWT authorizer, throttling"]
+        Lambda["Lambda, live alias<br/>Python, X-Ray"]
+        DDB[("DynamoDB<br/>encrypted, PITR")]
+        SM["Secrets Manager<br/>origin secret"]
+        DLQ["SQS dead-letter queue"]
+        APIGW --> Lambda
+        Lambda --> DDB
+        Lambda -.-> SM
+        Lambda -.-> DLQ
+    end
+
+    CW["CloudWatch alarms"] --> SNS["SNS email alerts"]
+
+    User <-->|"1. sign in, 2. token back"| Cognito
+    User -->|"3. request + token (HTTPS)"| R53
+    CF -->|"4. forward + secret header"| APIGW
+    Cognito -.->|"5. token checked"| APIGW
+    CORE -.->|"metrics, logs"| CW
+
+    style EDGE stroke-dasharray: 6 4
 ```
 
 **What was built:** the original prototype (Lambda, API Gateway, DynamoDB) upgraded in place. Cognito handles sign-in and API Gateway rejects requests without a valid token (401). Lambda runs from a versioned `live` alias with X-Ray tracing, a least-privilege IAM role and an SQS dead-letter queue. DynamoDB has encryption and point-in-time recovery, with deletion protection in prod. A Secrets Manager secret holds a header value that CloudFront adds to every request, so API Gateway cannot be called around it. The handler validates input, takes the owner from the verified token (never the request body), and only lets a user read or overwrite their own items. Seven CloudWatch alarms send email through SNS. The design adds Route 53, an ACM certificate, CloudFront (HTTP redirected to HTTPS) and WAF (managed rules and a rate limit) in front, behind an `enable_edge` switch that defaults to `false`.
