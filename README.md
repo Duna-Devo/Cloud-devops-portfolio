@@ -186,7 +186,7 @@ flowchart LR
 - Test the custom domain path (Route 53 and ACM), which needs a registered domain.
 - Add reserved Lambda concurrency once the account's concurrency limit allows it.
 - Narrow the deploy role from service-level permissions to the exact actions used, based on CloudTrail access data.
-- Alarm on failed API requests directly; the dead-letter queue only catches failed asynchronous events.
+- Alarm for API latency and a high 4xx rate
 
 **Files:** see `02b-serverless-terraform/` (`data.tf`, `lambda.tf`, `auth.tf`, `api.tf`, `edge.tf`, `monitoring.tf`, `dashboard.tf`, `lambda/handler.py`, `scripts/smoke_test.sh`, `scripts/bundle_lambda.sh`, `ci-roles/`) and `.github/workflows/serverless.yml`.
 
