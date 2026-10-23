@@ -6,6 +6,10 @@ from decimal import Decimal
 
 import boto3
 from botocore.exceptions import ClientError
+from aws_xray_sdk.core import patch
+
+# Record every AWS call (DynamoDB, Secrets Manager) as a timed step in the X-Ray trace.
+patch(("botocore",))
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
