@@ -166,7 +166,7 @@ resource "aws_cloudwatch_dashboard" "overview" {
   dashboard_body = jsonencode({
     widgets = concat(
       local.dashboard_base_widgets,
-      var.enable_edge ? local.dashboard_edge_widgets : [],
+      [for w in local.dashboard_edge_widgets : w if var.enable_edge],
     )
   })
 }
