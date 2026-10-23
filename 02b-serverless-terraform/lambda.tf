@@ -59,9 +59,11 @@ resource "aws_iam_role_policy" "lambda_policy" {
 ############################################
 # Lambda function (code is zipped by Terraform, no committed binary)
 ############################################
+# The zip is built from build/lambda-src, which scripts/bundle_lambda.sh fills with the
+# handler plus the X-Ray SDK. Run that script before terraform plan or apply.
 data "archive_file" "lambda" {
   type        = "zip"
-  source_file = "${path.module}/lambda/handler.py"
+  source_dir  = "${path.module}/build/lambda-src"
   output_path = "${path.module}/build/handler.zip"
 }
 

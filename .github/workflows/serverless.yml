@@ -66,6 +66,9 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
 
+      - name: Bundle Lambda package
+        run: bash ${{ env.TF_DIR }}/scripts/bundle_lambda.sh
+
       - name: Init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init -input=false -backend-config="key=serverless/dev/terraform.tfstate"
@@ -96,6 +99,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
+
+      - name: Bundle Lambda package
+        run: bash ${{ env.TF_DIR }}/scripts/bundle_lambda.sh
 
       - name: Init
         working-directory: ${{ env.TF_DIR }}

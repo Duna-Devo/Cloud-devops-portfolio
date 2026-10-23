@@ -1,0 +1,4 @@
+# Bundled into the Lambda zip by scripts/bundle_lambda.sh (boto3 and botocore already
+# come with the Lambda runtime, so they are not listed here).
+aws-xray-sdk==2.14.0
+wrapt>=1.16,<2
