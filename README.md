@@ -14,8 +14,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
 | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
 | Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
-| Kubernetes (Fargate) | EKS platform — re-deployed on Fargate for comparison | Planned |
-| Observability | Monitoring & SRE practices | Planned |
+| Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, and SLOs with error budgets | Planned |
 
 ## Gate check — write-up
 
