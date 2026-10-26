@@ -17,3 +17,8 @@ variable "container_port" {
   type    = number
   default = 5000
 }
+
+variable "image_tag" {
+  type    = string
+  default = "v1"
+}
