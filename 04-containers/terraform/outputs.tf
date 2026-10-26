@@ -9,3 +9,7 @@ output "vpc_id" {
 output "alb_dns_name" {
   value = aws_lb.main.dns_name
 }
+
+output "cloudfront_domain" {
+  value = aws_cloudfront_distribution.main.domain_name
+}
