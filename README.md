@@ -274,7 +274,7 @@ AWS resources after the first failed destroy attempt.
 
 **Goal:** run a containerized Flask app the way a production team would: Terraform-built private networking, ECS Fargate behind a load balancer, an HTTPS front door, alerting and autoscaling, and a pipeline that scans the image, deploys it through staging, and waits for approval before production.
 
-**Status:** deployed live to staging through the pipeline and verified through CloudFront. Production is gated by an approval and was rejected on purpose.
+**Status:** deployed live to staging through the pipeline, verified through CloudFront, then destroyed. Production is gated by an approval and was rejected on purpose.
 
 ```mermaid
 flowchart LR
@@ -312,7 +312,7 @@ flowchart LR
 
 **Verified end to end:** through the CloudFront address `/health` returns healthy and HTTP is redirected to HTTPS, while a direct request to the load balancer's own address times out. A merge to `main` ran the pipeline under the scoped role with no stored keys: the image tagged with the commit SHA was scanned, pushed and deployed as a new task definition revision, both tasks stayed healthy, and the smoke test passed. A CloudWatch alarm state change reached my inbox through SNS. In the final run, staging deployed automatically while the production job paused for approval, and I rejected it on purpose because production was never provisioned.
 
-**Teardown:** `terraform destroy` from `04-containers/terraform` removes the whole environment in dependency order, from the service and autoscaling through the load balancer and CloudFront to the NAT Gateway and network. The ECR repository is created with `force_delete`, so its images go with it, and CloudFront takes several minutes to delete. The deploy roles in `04-containers/ci-role/` have their own state and are left in place, so the pipeline keeps its access for the next build.
+**Teardown:** ran `terraform destroy` from `04-containers/terraform`, which removed all 45 resources in dependency order. Afterwards I checked that no ECS clusters, load balancers, NAT Gateways, CloudFront distributions or ECR repositories remained. The ECR repository is created with `force_delete`, so its images went with it. The deploy roles in `04-containers/ci-role/` have their own state and were left in place, so the pipeline keeps its access for the next build.
 
 **Next steps:**
 
