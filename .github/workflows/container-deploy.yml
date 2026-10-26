@@ -14,13 +14,17 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: stage4-app
-  ECS_CLUSTER: stage4-cluster
-  ECS_SERVICE: stage4-service
+  IMAGE_BASE: 010429757460.dkr.ecr.us-east-1.amazonaws.com/stage4-app
   CONTAINER_NAME: app
 
 jobs:
-  deploy:
+  staging:
     runs-on: ubuntu-latest
+    environment: staging
+    env:
+      ECS_CLUSTER: stage4-cluster
+      ECS_SERVICE: stage4-service
+      FRONT_DOOR: stage4 front door
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,42 +32,30 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::010429757460:role/stage4-deploy
+          role-to-assume: arn:aws:iam::010429757460:role/stage4-deploy-staging
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build image
-        id: build
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker build --platform linux/amd64 -t $IMAGE ./04-containers/app
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+        run: docker build --platform linux/amd64 -t $IMAGE_BASE:${{ github.sha }} ./04-containers/app
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.build.outputs.image }}
+          image-ref: ${{ env.IMAGE_BASE }}:${{ github.sha }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
 
       - name: Push image
-        env:
-          IMAGE: ${{ steps.build.outputs.image }}
-          IMAGE_TAG: ${{ steps.build.outputs.tag }}
         run: |
           if aws ecr describe-images --repository-name $ECR_REPOSITORY \
-               --image-ids imageTag=$IMAGE_TAG > /dev/null 2>&1; then
+               --image-ids imageTag=${{ github.sha }} > /dev/null 2>&1; then
             echo "Image tag already exists, skipping push"
           else
-            docker push $IMAGE
+            docker push $IMAGE_BASE:${{ github.sha }}
           fi
 
       - name: Record running task definition
@@ -84,7 +76,7 @@ jobs:
         with:
           task-definition: task-def.json
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build.outputs.image }}
+          image: ${{ env.IMAGE_BASE }}:${{ github.sha }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
@@ -98,7 +90,76 @@ jobs:
       - name: Smoke test through CloudFront
         run: |
           DOMAIN=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?Comment=='stage4 front door'].DomainName | [0]" \
+            --query "DistributionList.Items[?Comment=='$FRONT_DOOR'].DomainName | [0]" \
+            --output text)
+          URL=https://$DOMAIN
+          for i in $(seq 1 12); do
+            if curl -fsS $URL/health | grep -q healthy && curl -fsS -o /dev/null $URL/; then
+              echo "Smoke test passed"
+              exit 0
+            fi
+            echo "Not ready yet, retrying..."
+            sleep 10
+          done
+          echo "Smoke test failed"
+          exit 1
+
+      - name: Roll back on failure
+        if: failure() && steps.previous.outputs.arn != ''
+        run: |
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE \
+            --task-definition ${{ steps.previous.outputs.arn }} > /dev/null
+          aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE
+          echo "Rolled back to ${{ steps.previous.outputs.arn }}"
+
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ECS_CLUSTER: stage4-prod-cluster
+      ECS_SERVICE: stage4-prod-service
+      FRONT_DOOR: stage4-prod front door
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::010429757460:role/stage4-deploy-production
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Record running task definition
+        id: previous
+        run: |
+          PREV=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' --output text)
+          echo "arn=$PREV" >> $GITHUB_OUTPUT
+
+      - name: Download running task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ steps.previous.outputs.arn }} \
+            --query taskDefinition > task-def.json
+
+      - name: Render task definition with the staging-tested image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+      - name: Smoke test through CloudFront
+        run: |
+          DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='$FRONT_DOOR'].DomainName | [0]" \
             --output text)
           URL=https://$DOMAIN
           for i in $(seq 1 12); do
