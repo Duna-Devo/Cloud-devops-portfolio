@@ -312,6 +312,8 @@ flowchart LR
 
 **Verified end to end:** through the CloudFront address `/health` returns healthy and HTTP is redirected to HTTPS, while a direct request to the load balancer's own address times out. A merge to `main` ran the pipeline under the scoped role with no stored keys: the image tagged with the commit SHA was scanned, pushed and deployed as a new task definition revision, both tasks stayed healthy, and the smoke test passed. A CloudWatch alarm state change reached my inbox through SNS. In the final run, staging deployed automatically while the production job paused for approval, and I rejected it on purpose because production was never provisioned.
 
+**Teardown:** `terraform destroy` from `04-containers/terraform` removes the whole environment in dependency order, from the service and autoscaling through the load balancer and CloudFront to the NAT Gateway and network. The ECR repository is created with `force_delete`, so its images go with it, and CloudFront takes several minutes to delete. The deploy roles in `04-containers/ci-role/` have their own state and are left in place, so the pipeline keeps its access for the next build.
+
 **Next steps:**
 
 - Run a load test heavy enough to push CPU past 60% and watch the service scale out; the scaling policy is configured and confirmed in AWS but has not been exercised.
