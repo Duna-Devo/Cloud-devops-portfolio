@@ -272,41 +272,54 @@ AWS resources after the first failed destroy attempt.
 
 ## Stage 4 — Containerization & ECS Deployment
 
-**Goal:** containerize a Flask application using Docker, store the image in AWS ECR, deploy it to ECS Fargate behind an Application Load Balancer, and automate the entire build-push-deploy cycle with a GitHub Actions CI/CD pipeline.
+**Goal:** run a containerized Flask app the way a production team would: Terraform-built private networking, ECS Fargate behind a load balancer, an HTTPS front door, alerting and autoscaling, and a pipeline that scans the image, deploys it through staging, and waits for approval before production.
 
-**What was built:** a Flask app with two endpoints (`/` and `/health`), containerized using a Python 3.13-slim base image. The image is stored in ECR and runs on ECS Fargate — no servers to manage. An Application Load Balancer sits in front of the service providing a fixed DNS name, health checks, and zero-downtime rolling deployments. A GitHub Actions pipeline triggers on every push to `main` that touches `04-containers/`, automatically building a new image tagged with the commit SHA, pushing it to ECR, and deploying it to ECS.
+**Status:** deployed live to staging through the pipeline and verified through CloudFront. Production is gated by an approval and was rejected on purpose.
 
 ```mermaid
-flowchart TB
-    Dev((You / laptop)) -->|git push| GitHub[GitHub]
-    GitHub -->|triggers| Actions[GitHub Actions]
-    Actions -->|docker build + push| ECR[AWS ECR]
-    Actions -->|update service| ECS[ECS Fargate]
-    ECR -->|pulls image| ECS    
-	Internet((Internet)) --> ALB[Application Load Balancer]
-    ALB --> ECS
+flowchart LR
+    User([User]) -->|"1 HTTPS"| CF[CloudFront]
+    CF -->|"2 HTTP with secret header"| ALB[Load balancer]
+    subgraph VPC["VPC, 2 AZs"]
+        subgraph Public["Public subnets"]
+            ALB
+            NAT[NAT Gateway]
+        end
+        subgraph Private["Private subnets"]
+            Tasks["ECS Fargate tasks, 2 to 4"]
+        end
+    end
+    ALB -->|"3 port 5000"| Tasks
+    Tasks -.->|"image pull and logs"| NAT
+    Dev[GitHub Actions] -->|"scan, push"| ECR[(ECR)]
+    Dev -->|"deploy"| Tasks
+    Tasks --> CW[CloudWatch alarms]
+    CW --> SNS[SNS email]
 ```
 
-**Real bugs hit and fixed:**
+**What was built:** a Flask app with two endpoints (`/` and `/health`) in a `python:3.13-slim` image, with pip removed after the dependencies install so the runtime image carries no build tooling. Terraform builds everything, with remote state in S3 (`stage4/terraform.tfstate`, `use_lockfile` locking). A VPC (`10.2.0.0/16`) has public subnets for the load balancer and private subnets for the tasks across 2 AZs, with one NAT Gateway for outbound traffic. The image lives in ECR (immutable tags, scan on push, last 10 images kept) and runs as an ECS Fargate service of 2 tasks with a deployment circuit breaker that rolls a failed release back. An Application Load Balancer health-checks `/health`. CloudFront is the only way in: it provides HTTPS with its default certificate and redirects HTTP, the load balancer accepts traffic only from CloudFront's address range and only with a secret header, and the tasks accept traffic only from the load balancer on port 5000. The CloudFront-to-load-balancer leg is HTTP, because an ALB cannot hold a trusted certificate without a domain. Seven CloudWatch alarms send email through SNS (app 5xx, high 4xx rate, fewer than 2 healthy tasks, slow responses, CPU, memory, CloudFront 5xx), and CPU target tracking scales the service between 2 and 4 tasks.
 
-1. Security group misconfiguration — deployed the ECS service with an empty security group (`securityGroups=[]`), falling back to the default which blocks all inbound internet traffic. Curl requests timed out after 21 seconds with no connection rather than an immediate refusal — the signature of traffic being silently dropped at the network level rather than actively rejected. Fixed by adding an inbound rule opening port 5000 to `0.0.0.0/0` on the default security group.
+**Environments:** staging is the running environment (`stage4-*`). Production is a gated job in the same pipeline that targets `stage4-prod-*` resources under its own role; the production infrastructure itself was not provisioned.
 
-2. Pipeline action versions deprecated — initial pipeline used `actions/checkout@v3`, `configure-aws-credentials@v2`, and `amazon-ecr-login@v1`, all targeting Node.js 20. GitHub Actions runners upgraded to Node.js 24, causing the pipeline to fail. Fixed by upgrading all actions to their latest versions.
+**CI/CD pipeline (`.github/workflows/container-deploy.yml`, OIDC, no stored keys):** a push to `main` that changes `04-containers/app/` or the workflow runs a `staging` job, then a `production` job. Staging builds the image tagged with the commit SHA, scans it with Trivy (a critical or high finding with a fix fails the build before anything is pushed), pushes it to ECR, registers a new task definition from the one that is running, deploys it, waits for the service to be stable, and runs a smoke test through the CloudFront address (`/health` and `/`). If the deploy or the smoke test fails, the pipeline points the service back at the previous task definition. The `production` job waits for a required reviewer, then deploys the same image by its SHA, so what reaches production is exactly what staging tested. Each job signs in with its own role, defined in `04-containers/ci-role/` with its own state, so destroying the environment never removes the pipeline's access. The staging role can push to the one ECR repository and update the one service; the production role cannot push images and can only update the production service. Each role can be assumed only by jobs running in its own GitHub environment.
 
-3. Task definition not found — the deploy action expected a local file called `stage4-task` in the repo. The task definition lives in AWS, not as a file. Fixed by adding a step to download the task definition from AWS using `aws ecs describe-task-definition`, inject the new image into it, then deploy the updated file.
+**Real bugs diagnosed and fixed:**
 
-4. CodeDeploy controller lock — recreated the ECS service with `--deployment-controller type=CODE_DEPLOY` for blue/green support, which locked the service so only CodeDeploy could trigger deployments. CodeDeploy requires full AWS account activation which was pending. Fixed by deleting and recreating the service with the default rolling deployment controller while keeping the ALB attached.
+- The service was created before any image existed in ECR. Tasks failed with `CannotPullContainerError ... not found` and the load balancer returned 503 because it had no healthy targets. The ECS service events named the missing tag. Terraform cannot push an image, so the first image is pushed once and a new deployment forced; after that the pipeline pushes every release.
+- Editing a security group's description made Terraform replace the group, and the destroy hung for 15 minutes with `DependencyViolation` because the load balancer was still attached. Restoring the original description let the apply finish without replacing anything. A security group's description cannot change in place, so it is set once and left alone; rules can change freely.
+- The pipeline failed before running anything, with `Unable to resolve action ... trivy-action@0.28.0`: that tag no longer exists, because the action's tags now start with `v`. Pinned the action to `v0.36.0`.
+- Trivy then blocked the release over HIGH findings in `urllib3`, `msgpack` and `setuptools`, all with fixes available. The app's own dependencies were clean: listing the image's packages and searching for those names showed `urllib3` and `msgpack` were copies bundled inside pip itself (`pip/_vendor`). The app does not need pip at runtime, so the Dockerfile now uninstalls it after installing Flask, and the next run passed the scan.
 
-5. IP address changes on redeployment — ECS assigns a new public IP every time a task is replaced. Fixed permanently by adding an Application Load Balancer — the ALB DNS name never changes regardless of how many times the container is replaced.
+**Verified end to end:** through the CloudFront address `/health` returns healthy and HTTP is redirected to HTTPS, while a direct request to the load balancer's own address times out. A merge to `main` ran the pipeline under the scoped role with no stored keys: the image tagged with the commit SHA was scanned, pushed and deployed as a new task definition revision, both tasks stayed healthy, and the smoke test passed. A CloudWatch alarm state change reached my inbox through SNS. In the final run, staging deployed automatically while the production job paused for approval, and I rejected it on purpose because production was never provisioned.
 
-**Verified end to end:** pushed a code change, pipeline triggered automatically, new image built with commit SHA tag, pushed to ECR, ECS updated with new task definition revision, container restarted with zero downtime, ALB DNS name returned updated version — confirmed via curl.
+**Next steps:**
 
-**Live URL:** http://stage4-alb-188309003.us-east-1.elb.amazonaws.com
+- Run a load test heavy enough to push CPU past 60% and watch the service scale out; the scaling policy is configured and confirmed in AWS but has not been exercised.
+- Trigger a failing release on purpose to exercise the circuit breaker and the pipeline's rollback; both are configured, but neither has fired.
+- Provision the production environment (same Terraform, its own name and state) so the approval gate has something to deploy to.
+- Register a domain so the CloudFront-to-load-balancer leg can use HTTPS end to end.
 
-**Files:** see `04-containers/app/` for the Flask app, Dockerfile, and requirements. See `.github/workflows/container-deploy.yml` for the pipeline definition.
-
-**Teardown:** deleted resources in dependency order — ECS service scaled to zero then deleted, ECS cluster deleted, ALB listener deleted before target groups (listener holds a reference to the target group; deleting out of order returns a ResourceInUse error), Blue and Green target groups deleted, ECR repository force-deleted including all images, IAM access key deleted before IAM user (AWS blocks user deletion until all access keys are removed), IAM role and attached policies deleted, ALB security group deleted. Root cause of most teardown errors: resources that reference other resources must be removed before the thing they reference.
-
+**Files:** see `04-containers/app/` (Flask app and Dockerfile), `04-containers/terraform/` (network.tf, security.tf, ecr.tf, ecs.tf, alb.tf, edge.tf, monitoring.tf, autoscaling.tf), `04-containers/ci-role/`, and `.github/workflows/container-deploy.yml`.
 
 ## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
