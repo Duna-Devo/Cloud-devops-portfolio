@@ -22,3 +22,8 @@ variable "image_tag" {
   type    = string
   default = "v1"
 }
+
+variable "alert_email" {
+  type        = string
+  description = "Where CloudWatch alarm emails are sent"
+}
