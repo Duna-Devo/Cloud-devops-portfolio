@@ -4,17 +4,17 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 ## Projects
 
-| Stage | Description | Status |
-|---|---|---|
-| Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
-| AWS CLI two-tier | Manual then scripted two-tier app | Complete |
-| Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Complete |
-| CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
-| CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, running the Stage 2b serverless deploy through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
-| Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
-| Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
-| Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, and SLOs with error budgets | Planned |
+| # | Stage | Description | Status |
+| --- | --- | --- | --- |
+| [0](00-fundamentals) | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
+| [1](01-aws-cli) | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
+| [2](02-terraform) | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
+| [2b](02b-serverless-terraform) | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Complete |
+| [3](03-cicd) | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
+| [3b](03b-jenkins) | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, deploying a small serverless API through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
+| [4](04-containers) | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
+| [5](05-kubernetes-nodes) | Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
+| [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, and SLOs with error budgets | Planned |
 
 ## Gate check — write-up
 
@@ -37,9 +37,9 @@ flowchart TB
 ```
 
 **Real issue hit and resolved:**
-- Issue 1 — SSH to VM1 blocked:** initial SSH attempts to VM1 timed out consistently. Diagnosed methodically — verified the security group, route table, and instance health were all correct, then ruled out the network by testing over a different connection entirely. Isolated the cause to the laptop's own device-level policy blocking outbound SSH, regardless of network. Resolved by switching to SSM Session Manager, which uses HTTPS instead of SSH — arguably the more production-appropriate choice anyway, since it requires no open inbound port at all.
+- **Issue 1 — SSH to VM1 blocked:** initial SSH attempts to VM1 timed out consistently. Diagnosed methodically — verified the security group, route table, and instance health were all correct, then ruled out the network by testing over a different connection entirely. Isolated the cause to the laptop's own device-level policy blocking outbound SSH, regardless of network. Resolved by switching to SSM Session Manager, which uses HTTPS instead of SSH — arguably the more production-appropriate choice anyway, since it requires no open inbound port at all.
 
-- Issue 2 — VM2 had no path to install packages:** package installs on VM2 failed with repository timeout errors. Root cause: a fully private subnet has no route to the internet by default, even though it must also stay unreachable from outside. Resolved by adding a NAT Gateway and routing the private subnet's outbound traffic through it — giving VM2 and VM3 outbound-only internet access with zero inbound exposure.
+- **Issue 2 — VM2 had no path to install packages:** package installs on VM2 failed with repository timeout errors. Root cause: a fully private subnet has no route to the internet by default, even though it must also stay unreachable from outside. Resolved by adding a NAT Gateway and routing the private subnet's outbound traffic through it — giving VM2 and VM3 outbound-only internet access with zero inbound exposure.
 
 **Break/fix cycle:** stopped nginx on VM2 deliberately, diagnosed using `systemctl status`, `journalctl`, and `ss -tlnp` as if walking in cold, restarted it, and verified the fix from VM3 — the actual dependent machine — rather than from VM2 itself.
 
@@ -238,7 +238,7 @@ AWS resources after the first failed destroy attempt.
 
 ## Stage 3b — CI/CD Pipeline (Jenkins on EC2 + Terraform)
 
-**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy the original Stage 2b serverless API prototype (before the production design above), to learn what a self-hosted CI/CD server costs in setup and upkeep.
+**Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy a small serverless API (a DynamoDB table, a Lambda function with its role, and an API route), to learn what a self-hosted CI/CD server costs in setup and upkeep.
 
 **What was built:** a Jenkins server (2.580.1) on a single EC2 instance (t3.small, Amazon Linux 2023), provisioned entirely with Terraform and stored in the S3 remote backend with lockfile locking. The security group opens port 8080 to my IP only, and the server has no SSH key, reached only through SSM Session Manager. Jenkins runs with Java 21, plus Git and Terraform installed on the server. A `Jenkinsfile` (checkout, init, validate, plan, manual approval, apply) is loaded by a Jenkins job using "Pipeline script from SCM", so the pipeline lives in the repo like the Stage 3 workflow.
 
@@ -326,7 +326,7 @@ flowchart LR
 
 **Goal:** deploy the Stage 4 Flask app onto Amazon EKS, demonstrate Kubernetes' self-healing, and automate releases with a pipeline that scans the image, promotes it from staging to production, and rolls back a failed rollout.
 
-**Status:** the core platform (VPC, EKS, node group, ECR, OIDC pipeline, rollback) was built and verified live. The hardening layers (private networking, ALB with HTTPS, autoscaling, alerting, staging, Terraform pipeline) are written and checked with `terraform validate`, but have not been applied.
+**Status:** the full design was applied and verified live, then destroyed: the core platform (VPC, EKS, node group, ECR, OIDC pipeline, rollback) plus private networking, ALB with HTTPS, autoscaling, alerting, staging and the Terraform pipeline.
 
 **What was built:** a dedicated VPC (`10.1.0.0/16`) with public subnets for load balancers and private subnets for nodes across 2 AZs, with one NAT Gateway per AZ so losing one zone does not cut off the other. Least-privilege IAM roles, an EKS cluster (`duna-eks-cluster`), and a managed node group (t3.medium, desired 2, maximum 3). The app image lives in ECR and runs as a Deployment (2 replicas) with readiness and liveness probes and CPU and memory limits, behind a `ClusterIP` Service and an ALB Ingress. Terraform installs the AWS Load Balancer Controller, metrics-server and Cluster Autoscaler through Helm releases, each with its own IAM role scoped to one service account. HTTPS uses an ACM certificate validated through Route 53, with HTTP redirected. A PodDisruptionBudget keeps one pod up during maintenance, and a HorizontalPodAutoscaler scales 2 to 4 pods at 70% CPU. Monitoring combines the CloudWatch Container Insights add-on with a CloudWatch alarm on node CPU that sends SNS email alerts. The Terraform apply role uses a scoped policy in place of `AdministratorAccess` and cannot modify itself. State is stored in S3 (`duna-eks-tfstate`) with `use_lockfile` locking.
 
@@ -386,6 +386,6 @@ Real bugs diagnosed and fixed:
 
 **Needed to run the full design:** the domain, hosted zone and alert email passed as Terraform variables, the `CERTIFICATE_ARN_STAGING` and `CERTIFICATE_ARN_PRODUCTION` repository variables set from `terraform output certificate_arn` after the first apply, and required reviewers on the `production` environment. On a fresh account the first apply runs in two steps (`-target=aws_eks_cluster.main`, then a full apply) because the Helm and Kubernetes providers need the cluster to exist.
 
-**Next steps:** attach the permissions boundary to every role Terraform creates so it is enforced, and refine the apply policy from real plan output, since it is a least-privilege starting point and has not been exercised against a live apply.
+**Next steps:** attach the permissions boundary to every role Terraform creates so it is enforced, and narrow the apply policy further from real plan output.
 
 **Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `ingress.yaml`, `pdb.yaml`, `hpa.yaml`, `iam_policy.json`, `app/`, `.github/workflows/eks-deploy.yml`, and `.github/workflows/terraform.yml`.
