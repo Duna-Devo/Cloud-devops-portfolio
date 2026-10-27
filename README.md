@@ -4,17 +4,46 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 ## Projects
 
+### Foundations
+
 | # | Stage | Description | Status |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | [0](00-fundamentals) | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
 | [1](01-aws-cli) | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
+
+### Infrastructure as Code
+
+| # | Stage | Description | Status |
+|---|---|---|---|
 | [2](02-terraform) | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
 | [2b](02b-serverless-terraform) | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Complete |
+
+### CI/CD
+
+| # | Stage | Description | Status |
+|---|---|---|---|
 | [3](03-cicd) | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
 | [3b](03b-jenkins) | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, deploying a small serverless API through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
+
+### Containers
+
+| # | Stage | Description | Status |
+|---|---|---|---|
 | [4](04-containers) | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
+
+### Kubernetes
+
+| # | Stage | Description | Status |
+|---|---|---|---|
 | [5](05-kubernetes-nodes) | Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
 | [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, and SLOs with error budgets | Planned |
+
+### Security
+
+| # | Stage | Description | Status |
+|---|---|---|---|
+| [7](07-security-capstone) | Security review | Terraform scanning in CI, plus CloudTrail and GuardDuty | Planned |
+
 
 ## Gate check — write-up
 
