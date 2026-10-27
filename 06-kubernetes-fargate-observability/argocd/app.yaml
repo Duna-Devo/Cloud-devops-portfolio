@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/Duna-Devo/Cloud-devops-portfolio.git
-    targetRevision: stage6-cluster
+    targetRevision: main
     path: 06-kubernetes-fargate-observability/charts/app
     helm:
       valueFiles:
