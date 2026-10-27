@@ -1,0 +1,32 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: portfolio
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/Duna-Devo/Cloud-devops-portfolio.git
+  ref:
+    branch: main
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app
+  namespace: default
+spec:
+  interval: 5m
+  releaseName: app
+  driftDetection:
+    mode: enabled
+  chart:
+    spec:
+      chart: ./06-kubernetes-fargate-observability/charts/app
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: portfolio
+        namespace: flux-system
+      valuesFiles:
+        - 06-kubernetes-fargate-observability/charts/app/values.yaml
+        - 06-kubernetes-fargate-observability/charts/app/values-stage6.yaml
