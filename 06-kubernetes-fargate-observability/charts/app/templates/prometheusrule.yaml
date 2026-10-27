@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-slo
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  groups:
+    - name: {{ .Release.Name }}.slo
+      rules:
+{{- range $w := list "5m" "30m" "1h" "6h" }}
+        - record: app:error_ratio:rate{{ $w }}
+          expr: |
+            (sum(rate(http_requests_total{job="{{ $.Release.Name }}",status=~"5.."}[{{ $w }}])) or vector(0))
+            / sum(rate(http_requests_total{job="{{ $.Release.Name }}"}[{{ $w }}]))
+{{- end }}
+        - record: app:error_budget_remaining:1h
+          expr: 1 - (app:error_ratio:rate1h / {{ .Values.slo.errorBudget }})
+        - alert: AppErrorBudgetFastBurn
+          expr: app:error_ratio:rate5m > (14.4 * {{ .Values.slo.errorBudget }}) and app:error_ratio:rate1h > (14.4 * {{ .Values.slo.errorBudget }})
+          for: 2m
+          labels:
+            severity: page
+          annotations:
+            summary: Error budget is burning 14.4 times faster than the SLO allows
+        - alert: AppErrorBudgetSlowBurn
+          expr: app:error_ratio:rate30m > (6 * {{ .Values.slo.errorBudget }}) and app:error_ratio:rate6h > (6 * {{ .Values.slo.errorBudget }})
+          for: 15m
+          labels:
+            severity: ticket
+          annotations:
+            summary: Error budget is burning 6 times faster than the SLO allows

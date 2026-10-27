@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-slo-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  app-slo.json: |-
+{{ .Files.Get "files/app-slo.json" | indent 4 }}

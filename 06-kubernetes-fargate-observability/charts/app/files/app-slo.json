@@ -1,0 +1,43 @@
+{
+  "title": "App SLO (99.5% success)",
+  "uid": "app-slo",
+  "schemaVersion": 39,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Success rate (1h)",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "1 - app:error_ratio:rate1h", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.995 } ] } } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Error budget remaining (1h)",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "app:error_budget_remaining:1h", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 0,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.25 }, { "color": "green", "value": 0.5 } ] } } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Request rate",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(rate(http_requests_total{job=\"app\"}[5m]))", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 1 } }
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Error ratio against the 0.5% budget",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "app:error_ratio:rate5m", "legendFormat": "5m", "refId": "A" },
+        { "expr": "app:error_ratio:rate1h", "legendFormat": "1h", "refId": "B" },
+        { "expr": "vector(0.005)", "legendFormat": "budget (0.5%)", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    }
+  ]
+}
