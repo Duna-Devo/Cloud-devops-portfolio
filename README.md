@@ -8,34 +8,34 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [0](00-fundamentals) | Gate check | 3-VM network: public entry point (VM1) + two fully private machines (VM2, VM3), NAT Gateway for outbound-only access, SSM-based access with zero open SSH ports, deliberate break/fix cycle | Complete |
-| [1](01-aws-cli) | AWS CLI two-tier | Manual then scripted two-tier app | Complete |
+| [0](00-fundamentals) | Gate check | Public and private VMs, SSM access with no open SSH, and a break/fix exercise | Complete |
+| [1](01-aws-cli) | AWS CLI two-tier | A two-tier AWS app, built by hand and then by script | Complete |
 
 ### Infrastructure as Code
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [2](02-terraform) | Terraform platform | Infrastructure as code (traditional VPC/EC2/RDS) | Complete |
-| [2b](02b-serverless-terraform) | Serverless API (Terraform) | Lambda + API Gateway + DynamoDB, least-privilege IAM; production design (Cognito, CloudFront, WAF, Secrets Manager, alarms, 3 environments) | Complete |
+| [2](02-terraform) | Terraform platform | The same architecture as code, with remote state and drift detection | Complete |
+| [2b](02b-serverless-terraform) | Serverless API (Terraform) | A production-style serverless API with sign-in, a protected front door, alerting and a gated three-environment pipeline | Complete |
 
 ### CI/CD
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [3](03-cicd) | CI/CD pipeline (GitHub Actions) | GitHub Actions pipeline: PR triggers plan, merge triggers apply, OIDC auth | Complete |
-| [3b](03b-jenkins) | CI/CD pipeline (Jenkins) | Jenkins on EC2 provisioned with Terraform, deploying a small serverless API through a plan, approval, apply Jenkinsfile, no stored AWS keys | Complete |
+| [3](03-cicd) | CI/CD pipeline (GitHub Actions) | Plan on pull request, apply on merge, deploying the Stage 2 infrastructure with no stored keys | Complete |
+| [3b](03b-jenkins) | CI/CD pipeline (Jenkins) | The same pipeline on self-hosted Jenkins, to compare effort | Complete |
 
 ### Containers
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [4](04-containers) | Containers & ECS | Docker, ECR, ECS Fargate, ALB, CI/CD pipeline | Complete |
+| [4](04-containers) | Containers & ECS | A container on ECS Fargate behind HTTPS, deployed through staging with scanning and rollback | Complete |
 
 ### Kubernetes
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [5](05-kubernetes-nodes) | Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
+| [5](05-kubernetes-nodes) | Kubernetes (node-based) | The app on EKS with self-healing and autoscaling, deployed with scanning and rollback | Complete |
 | [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, SLOs with error budgets, and GitOps deploys with Argo CD and Flux | Planned |
 
 ### Configuration management and monitoring
