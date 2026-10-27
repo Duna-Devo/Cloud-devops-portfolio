@@ -1,0 +1,9 @@
+installCRDs: true
+notificationController:
+  create: false
+imageAutomationController:
+  create: false
+imageReflectionController:
+  create: false
+kustomizeController:
+  create: false
