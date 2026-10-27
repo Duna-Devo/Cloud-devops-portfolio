@@ -36,13 +36,19 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | # | Stage | Description | Status |
 |---|---|---|---|
 | [5](05-kubernetes-nodes) | Kubernetes (node-based) | EKS platform — node-based cluster with a GitHub Actions deploy pipeline (OIDC, automatic rollback) | Complete |
-| [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, and SLOs with error budgets | Planned |
+| [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, SLOs with error budgets, and GitOps deploys with Argo CD and Flux | Planned |
+
+### Configuration management and monitoring
+
+| # | Stage | Description | Status |
+|---|---|---|---|
+| [7](07-server-configuration) | Linux servers with Ansible | Linux servers on EC2 configured with Ansible, running PostgreSQL, monitored by Zabbix, and deployed through GitLab CI | Planned |
 
 ### Security
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [7](07-security-capstone) | Security review | Terraform scanning in CI, plus CloudTrail and GuardDuty | Planned |
+| [8](08-security-capstone) | Security review | Terraform scanning in CI, plus CloudTrail and GuardDuty | Planned |
 
 
 ## Gate check — write-up
