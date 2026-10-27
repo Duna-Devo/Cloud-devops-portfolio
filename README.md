@@ -36,7 +36,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | # | Stage | Description | Status |
 |---|---|---|---|
 | [5](05-kubernetes-nodes) | Kubernetes (node-based) | The app on EKS with self-healing and autoscaling, deployed with scanning and rollback | Complete |
-| [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, SLOs with error budgets, and GitOps deploys with Argo CD and Flux | Planned |
+| [6](06-kubernetes-fargate-observability) | Kubernetes on Fargate with observability | EKS on Fargate, with centralised logging, Prometheus and Grafana, SLOs with error budgets, and GitOps deploys with Argo CD and Flux | Complete |
 
 ### Configuration management and monitoring
 
@@ -426,3 +426,70 @@ Real bugs diagnosed and fixed:
 **Next steps:** attach the permissions boundary to every role Terraform creates so it is enforced, and narrow the apply policy further from real plan output.
 
 **Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `ingress.yaml`, `pdb.yaml`, `hpa.yaml`, `iam_policy.json`, `app/`, `.github/workflows/eks-deploy.yml`, and `.github/workflows/terraform.yml`.
+
+## Stage 6 — Kubernetes on Fargate with Observability and GitOps
+
+**Goal:** Run the Stage 4 app on EKS with no servers to manage, and make it observable and reliable: centralised logs, metrics, an SLO with an error budget and burn-rate alerts, and deploys driven by Git (Argo CD first, then Flux).
+
+**Status:** Complete. Built, verified end to end, then destroyed. The CI role and Terraform state are kept.
+
+```mermaid
+flowchart LR
+    push["Push to main"] --> gha["GitHub Actions: build, Trivy scan, push"]
+    gha --> ecr[("ECR")]
+    gha -->|"commits new image tag"| git[("Git: values file")]
+    git -->|"pulled by"| gitops["Argo CD, then Flux"]
+    gitops --> app["App pods on EKS Fargate"]
+    app -->|"stdout logs"| cw["CloudWatch Logs"]
+    prom["Prometheus"] -->|"scrapes /metrics"| app
+    prom --> graf["Grafana SLO dashboard"]
+    prom --> alerts["Burn-rate alerts"]
+```
+
+**What was built**
+- **Cluster (Terraform, S3 backend):** VPC `10.3.0.0/16` with public and private subnets across two AZs and a NAT gateway; EKS cluster `stage6-cluster` (Kubernetes 1.37, API authentication mode); Fargate profiles for `default`, `kube-system` and `monitoring`, and a second profile for `argocd` and `flux-system`; CoreDNS set to run on Fargate; ECR repo `stage6-app` with immutable tags and scan on push.
+- **Logging:** Fargate's built-in log router sends pod logs to the CloudWatch log group `/stage6/pods` (7-day retention), configured in `k8s/logging.yaml`.
+- **Monitoring:** Prometheus and Grafana from the `kube-prometheus-stack` Helm chart. Node-exporter, the control-plane scrapers, the operator webhook and Alertmanager are switched off because they don't work on Fargate or aren't needed yet (`helm/monitoring-values.yaml`).
+- **App:** the Flask app with a `/metrics` page (request counter and latency histogram) and a `/fail` endpoint for testing. It is packaged as a Helm chart (`charts/app`) with a Deployment, Service, ServiceMonitor, PrometheusRule and a Grafana dashboard.
+- **SLO:** 99.5% of requests succeed, which gives a 0.5% error budget. Prometheus records the error ratio over 5 minutes, 30 minutes, 1 hour and 6 hours. A fast-burn alert fires at 14.4 times the allowed rate (5-minute and 1-hour windows), and a slow-burn alert at 6 times (30-minute and 6-hour windows).
+- **GitOps:** Argo CD (`argocd/app.yaml`) with automated sync, prune and self-heal, then Flux (`flux/app.yaml`: a GitRepository and a HelmRelease with drift detection) managing the same chart.
+
+**CI/CD pipeline** (`.github/workflows/stage6-build.yml`)
+1. On a push that changes the app, GitHub Actions signs in to AWS with OIDC, using the `stage6-ci` role. The role can only push to `stage6-app`, and only from `main` or `stage6-cluster`.
+2. It builds the image, scans it with Trivy (HIGH and CRITICAL, fixable only), and pushes it tagged with the short commit SHA.
+3. It commits the new tag to `charts/app/values-stage6.yaml`.
+4. Argo CD (or Flux) sees the commit and deploys the new image. The workflow never touches the cluster.
+
+**Argo CD against Flux** (same app, same chart)
+
+| | Argo CD | Flux |
+|---|---|---|
+| Objects | one `Application` | a `GitRepository` and a `HelmRelease` |
+| Footprint in this build | five pods | two controllers (source and helm) |
+| Interface | web UI (not used here) | kubectl only |
+| Manual-change handling | `selfHeal` | `driftDetection` |
+
+**Real bugs**
+- **OIDC role refused the pipeline** (`Not authorized to perform sts:AssumeRoleWithWebIdentity`): the trust policy matched the repo path exactly. Switched the condition to `StringLike` with a wildcard on the repo name.
+- **New image tag never deployed:** merging to `main` ran the workflow there, so the tag commit landed on `main`, while Argo CD was still watching the feature branch. Pointed Argo CD at `main`.
+- **Flux HelmRelease failed** (`no values file found`): `valuesFiles` paths are relative to the repo root, not the chart folder.
+- **Fargate limits:** node-exporter and the Prometheus operator webhook don't run on Fargate and were switched off. Prometheus can't scrape the kubelet there, so node-level dashboards are empty and the `KubeletInstanceUnreachable` alert fires.
+- **Fargate profiles:** profile selectors can't be edited in place, and profiles must be created one at a time. Added a second profile with `depends_on` instead of replacing the first.
+
+**Verified**
+- Nodes are named `fargate-ip-...` and both CoreDNS pods run on them.
+- Test log lines from a pod appeared in CloudWatch under `/stage6/pods`.
+- Grafana shows CPU and memory for the monitoring pods, and `/metrics` counts `200` and `500` responses separately.
+- With normal traffic plus deliberate failures, `AppErrorBudgetFastBurn` reached `firing` and `AppErrorBudgetSlowBurn` reached `pending`.
+- GitHub Actions run green, and the new image (`82ea69f`) was deployed by Argo CD from the tag commit.
+- With Argo CD and then Flux, changing `replicaCount` in Git scaled the app from 2 to 3, and reverting the commit brought it back to 2.
+
+**Teardown:** the Flux and monitoring releases were uninstalled, then `terraform destroy` removed the cluster, network, ECR repo and log group. The `stage6-ci` role and its state in `ci-role/` stay, as in Stage 4.
+
+**Next steps**
+- Record the self-heal test (scale by hand, watch the GitOps tool undo it) for both tools.
+- Turn on Alertmanager so alerts reach email or SNS. Right now they only show in Prometheus.
+- Give Prometheus persistent storage (EFS), since metrics reset when the pod restarts. The SLO dashboard uses a 1-hour window because retention is 6 hours; production would use 30 days.
+- Add a public endpoint with the AWS Load Balancer Controller (needs IRSA on Fargate) and a staging-then-production gate, as in Stage 4.
+
+**Files:** `terraform/` (cluster), `ci-role/` (OIDC role), `app/` (Flask app), `charts/app/` (Helm chart and SLO rules), `helm/` (monitoring, Argo CD and Flux values), `k8s/` (logging config), `argocd/` and `flux/` (GitOps definitions).
