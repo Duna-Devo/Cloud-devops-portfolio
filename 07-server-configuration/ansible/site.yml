@@ -1,0 +1,178 @@
+# Play 1: every server gets the Zabbix repo and the Zabbix agent
+- name: Zabbix agent on all servers
+  hosts: all
+  become: true
+  tasks:
+    - name: Download Zabbix 6.0 repo package
+      ansible.builtin.get_url:
+        url: https://repo.zabbix.com/zabbix/6.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.0-4+ubuntu22.04_all.deb
+        dest: /tmp/zabbix-release.deb
+
+    - name: Install Zabbix repo package
+      ansible.builtin.apt:
+        deb: /tmp/zabbix-release.deb
+
+    - name: Install Zabbix agent
+      ansible.builtin.apt:
+        name: zabbix-agent
+        update_cache: true
+
+    - name: Point agent at the monitor server
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agentd.d/stage7.conf
+        content: |
+          Server=127.0.0.1,{{ monitor_private_ip }}
+          ServerActive={{ monitor_private_ip }}
+          Hostname={{ 'Zabbix server' if inventory_hostname in groups['monitor'] else inventory_hostname }}
+      notify: Restart zabbix-agent
+
+    - name: Agent enabled and running
+      ansible.builtin.service:
+        name: zabbix-agent
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart zabbix-agent
+      ansible.builtin.service:
+        name: zabbix-agent
+        state: restarted
+
+# Play 2: PostgreSQL on the db server
+- name: PostgreSQL on db server
+  hosts: db
+  become: true
+  tasks:
+    - name: Install PostgreSQL
+      ansible.builtin.apt:
+        name: [postgresql, python3-psycopg2]
+        update_cache: true
+
+    - name: Listen on all interfaces
+      ansible.builtin.lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: '^#?listen_addresses'
+        line: "listen_addresses = '*'"
+      notify: Restart postgresql
+
+    - name: Allow the zabbix user from inside the VPC
+      ansible.builtin.lineinfile:
+        path: /etc/postgresql/14/main/pg_hba.conf
+        line: "host zabbix zabbix 172.31.0.0/16 scram-sha-256"
+      notify: Restart postgresql
+
+    - name: Apply PostgreSQL changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create zabbix database user
+      community.postgresql.postgresql_user:
+        name: zabbix
+        password: "{{ zabbix_db_password }}"
+      become_user: postgres
+      no_log: true
+
+    - name: Create zabbix database
+      community.postgresql.postgresql_db:
+        name: zabbix
+        owner: zabbix
+        encoding: UTF8
+        template: template0
+      become_user: postgres
+
+  handlers:
+    - name: Restart postgresql
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+
+# Play 3: Zabbix server and web page on the monitor server
+- name: Zabbix server on monitor
+  hosts: monitor
+  become: true
+  tasks:
+    - name: Install Zabbix server, web frontend and DB client
+      ansible.builtin.apt:
+        name:
+          - zabbix-server-pgsql
+          - zabbix-frontend-php
+          - php-pgsql
+          - zabbix-apache-conf
+          - zabbix-sql-scripts
+          - postgresql-client
+
+    - name: Check whether the Zabbix schema is already loaded
+      ansible.builtin.command: >
+        psql -h {{ db_private_ip }} -U zabbix -d zabbix -tAc "select to_regclass('public.users')"
+      environment:
+        PGPASSWORD: "{{ zabbix_db_password }}"
+      register: schema_check
+      changed_when: false
+      no_log: true
+
+    - name: Load the Zabbix schema
+      ansible.builtin.shell: >
+        zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz |
+        psql -h {{ db_private_ip }} -U zabbix -d zabbix
+      environment:
+        PGPASSWORD: "{{ zabbix_db_password }}"
+      when: schema_check.stdout | trim == ""
+      no_log: true
+
+    - name: Point Zabbix server at the db server
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_server.conf
+        regexp: "^#? ?{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: DBHost, value: "{{ db_private_ip }}" }
+        - { key: DBName, value: zabbix }
+        - { key: DBUser, value: zabbix }
+        - { key: DBPassword, value: "{{ zabbix_db_password }}" }
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      notify: Restart zabbix-server
+
+    - name: Configure the web frontend (skips the setup wizard)
+      ansible.builtin.copy:
+        dest: /etc/zabbix/web/zabbix.conf.php
+        owner: www-data
+        group: www-data
+        mode: "0640"
+        content: |
+          <?php
+          $DB['TYPE'] = 'POSTGRESQL';
+          $DB['SERVER'] = '{{ db_private_ip }}';
+          $DB['PORT'] = '5432';
+          $DB['DATABASE'] = 'zabbix';
+          $DB['USER'] = 'zabbix';
+          $DB['PASSWORD'] = '{{ zabbix_db_password }}';
+          $DB['SCHEMA'] = '';
+          $DB['ENCRYPTION'] = false;
+          $DB['KEY_FILE'] = '';
+          $DB['CERT_FILE'] = '';
+          $DB['CA_FILE'] = '';
+          $DB['VERIFY_HOST'] = false;
+          $DB['CIPHER_LIST'] = '';
+          $DB['VAULT_URL'] = '';
+          $DB['VAULT_DB_PATH'] = '';
+          $DB['VAULT_TOKEN'] = '';
+          $DB['DOUBLE_IEEE754'] = true;
+          $ZBX_SERVER = 'localhost';
+          $ZBX_SERVER_PORT = '10051';
+          $ZBX_SERVER_NAME = 'Stage 7';
+          $IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
+      no_log: true
+
+    - name: Zabbix server and Apache enabled and running
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: [zabbix-server, apache2]
+
+  handlers:
+    - name: Restart zabbix-server
+      ansible.builtin.service:
+        name: zabbix-server
+        state: restarted
