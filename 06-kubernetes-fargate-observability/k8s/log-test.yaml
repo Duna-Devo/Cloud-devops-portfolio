@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: log-test
+  namespace: default
+spec:
+  containers:
+    - name: logger
+      image: public.ecr.aws/docker/library/busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          i=0; while true; do echo "stage6 test log line $i"; i=$((i+1)); sleep 5; done

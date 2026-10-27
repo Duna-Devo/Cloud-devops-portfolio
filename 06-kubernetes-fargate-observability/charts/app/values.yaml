@@ -1,0 +1,18 @@
+replicaCount: 2
+
+image:
+  repository: ""
+  tag: v1
+
+service:
+  port: 80
+  targetPort: 5000
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+slo:
+  target: "99.5%"
+  errorBudget: 0.005

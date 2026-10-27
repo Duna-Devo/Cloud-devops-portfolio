@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Duna-Devo/Cloud-devops-portfolio.git
+    targetRevision: stage6-cluster
+    path: 06-kubernetes-fargate-observability/charts/app
+    helm:
+      valueFiles:
+        - values-stage6.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

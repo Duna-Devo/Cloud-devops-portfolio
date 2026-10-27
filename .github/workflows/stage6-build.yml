@@ -1,0 +1,62 @@
+name: stage6-build
+
+on:
+  push:
+    branches: [main, stage6-cluster]
+    paths:
+      - "06-kubernetes-fargate-observability/app/**"
+      - ".github/workflows/stage6-build.yml"
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: stage6-build
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ACCOUNT_ID: "010429757460"
+  REPO_NAME: stage6-app
+  VALUES_FILE: 06-kubernetes-fargate-observability/charts/app/values-stage6.yaml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        run: echo "TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT_ID }}:role/stage6-ci
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: docker build -t "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$TAG" 06-kubernetes-fargate-observability/app
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.REPO_NAME }}:${{ env.TAG }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push image
+        run: docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$TAG"
+
+      - name: Update image tag in Git
+        run: |
+          sed -i "s|^  tag:.*|  tag: \"${TAG}\"|" "$VALUES_FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$VALUES_FILE"
+          git commit -m "ci(stage6): deploy image ${TAG}"
+          git pull --rebase
+          git push
