@@ -2,4 +2,4 @@ replicaCount: 2
 
 image:
   repository: 010429757460.dkr.ecr.us-east-1.amazonaws.com/stage6-app
-  tag: v1
+  tag: "82ea69f"
