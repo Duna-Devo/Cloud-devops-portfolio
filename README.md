@@ -51,6 +51,8 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 | [8](08-security-capstone) | Security review | Terraform scanning in CI, plus CloudTrail and GuardDuty | Planned |
 
 
+
+
 ## Gate check — write-up
 
 **Goal:** build a public entry point and two fully isolated private machines, prove they can communicate internally, and recover from an induced failure using logs alone.
