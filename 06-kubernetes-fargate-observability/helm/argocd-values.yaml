@@ -1,0 +1,32 @@
+dex:
+  enabled: false
+notifications:
+  enabled: false
+configs:
+  params:
+    server.insecure: true
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+server:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+repoServer:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+applicationSet:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+redis:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
