@@ -17,11 +17,11 @@ data "aws_iam_policy_document" "trust" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:Duna-Devo/Cloud-devops-portfolio:ref:refs/heads/main",
-        "repo:Duna-Devo/Cloud-devops-portfolio:ref:refs/heads/stage6-cluster",
+        "repo:Duna-Devo*/Cloud-devops-portfolio*:ref:refs/heads/main",
+        "repo:Duna-Devo*/Cloud-devops-portfolio*:ref:refs/heads/stage6-cluster",
       ]
     }
   }
