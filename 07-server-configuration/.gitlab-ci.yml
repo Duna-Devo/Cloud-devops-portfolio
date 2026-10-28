@@ -12,9 +12,9 @@ before_script:
 syntax-check:
   stage: check
   script:
-    - ansible-playbook -i ansible/inventory.ini ansible/site.yml --syntax-check -e "zabbix_db_password=x"
+    - ansible-playbook -i 07-server-configuration/ansible/inventory.ini 07-server-configuration/ansible/site.yml --syntax-check -e "zabbix_db_password=x"
 
 configure-servers:
   stage: configure
   script:
-    - ansible-playbook -i ansible/inventory.ini ansible/site.yml --private-key "$SSH_KEY_FILE" -e "zabbix_db_password=$ZABBIX_DB_PASSWORD"
+    - ansible-playbook -i 07-server-configuration/ansible/inventory.ini 07-server-configuration/ansible/site.yml --private-key "$SSH_KEY_FILE" -e "zabbix_db_password=$ZABBIX_DB_PASSWORD"
