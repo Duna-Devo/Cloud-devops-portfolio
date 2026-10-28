@@ -550,3 +550,12 @@ A security layer for the AWS account: stop risky changes in CI, keep a record of
 - GuardDuty for automatic threat detection (needs an AWS paid plan).
 - A customer-managed KMS key for the trail logs and the alert topic.
 - Send CloudTrail to CloudWatch Logs and add metric alarms.
+
+### Design decisions
+
+- **EventBridge and SNS instead of GuardDuty.** GuardDuty needs a paid subscription on the AWS Free plan. Two EventBridge rules cover the events that matter most (trail tampering and root console login) and send an email alert at no cost.
+- **CloudTrail with log file validation.** The trail is multi-region and signs its logs, so any edit or deletion of the logs can be detected.
+- **Locked-down log bucket.** Public access is blocked, versioning and AES256 encryption are on, and a 90-day lifecycle rule keeps storage cost down.
+- **Access Analyzer at account scope.** There is no AWS Organization in this account, so the analyzer covers the account.
+- **Checkov and gitleaks in CI.** Misconfigured infrastructure and leaked secrets fail the pull request before they reach main.
+- **Documented Checkov skips.** Each skip is a comment next to the resource with its reason. Examples are a customer-managed KMS key and cross-region replication, which are out of scope for a demo account.
