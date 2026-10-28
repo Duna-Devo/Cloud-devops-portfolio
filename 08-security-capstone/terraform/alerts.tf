@@ -3,6 +3,7 @@ variable "alert_email" {
 }
 
 resource "aws_sns_topic" "alerts" {
+  #checkov:skip=CKV_AWS_26:EventBridge cannot publish to a topic using the default AWS key, a customer-managed KMS key is a next step
   name = "stage8-security-alerts"
 }
 

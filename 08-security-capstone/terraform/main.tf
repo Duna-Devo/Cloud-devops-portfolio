@@ -58,6 +58,8 @@ resource "aws_s3_bucket_policy" "trail" {
 
 # Records every action taken in the AWS account
 resource "aws_cloudtrail" "main" {
+  #checkov:skip=CKV_AWS_35:Logs are in a private AES-256 bucket and a KMS key adds monthly cost, listed as a next step
+  #checkov:skip=CKV_AWS_252:Log-file notifications would email every delivery, real alerts use EventBridge rules
   #checkov:skip=CKV2_AWS_10:Alerts use EventBridge rules instead of CloudWatch Logs
   name                          = "stage8-trail"
   s3_bucket_name                = aws_s3_bucket.trail.id
