@@ -48,7 +48,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [8](08-security-capstone) | Security review | Terraform scanning in CI, plus CloudTrail and GuardDuty | Planned |
+| [8](08-security-capstone) | Security review | Checkov and gitleaks scans in CI, plus CloudTrail, EventBridge alerts and IAM Access Analyzer | Complete |
 
 
 
@@ -519,3 +519,34 @@ Three Ubuntu servers on AWS, built with CloudFormation and configured with Ansib
 ### Next steps
 - Register the `app` and `db` servers as hosts in Zabbix and add alert rules.
 - Replace the open SSH rule with a self-hosted GitLab runner inside the VPC.
+
+## Stage 8: Security Review (Checkov, gitleaks, CloudTrail, EventBridge, Access Analyzer)
+
+A security layer for the AWS account: stop risky changes in CI, keep a record of everything, and get an email when something dangerous happens.
+
+| Part | What it does |
+|------|--------------|
+| Checkov | Scans the Terraform in CI and fails the pipeline on risky settings |
+| gitleaks | Scans the whole repo in CI for leaked secrets |
+| CloudTrail | Multi-region trail with log file validation, stored in a private, versioned, encrypted S3 bucket with a 90-day lifecycle |
+| EventBridge and SNS | Emails an alert if CloudTrail logging is stopped, deleted or changed, or if the root user signs in |
+| IAM Access Analyzer | Flags resources shared outside the account |
+
+### How it works
+- `08-security-capstone/terraform/` holds the Terraform (S3 remote backend): the trail and its bucket in `main.tf`, the alerts in `alerts.tf`, the analyzer in `analyzer.tf`.
+- `.github/workflows/stage8-security.yml` runs Checkov and gitleaks on every push to the folder.
+- Checkov's first run failed. I fixed the findings that mattered (versioning, lifecycle rule, explicit encryption) and skipped the rest with a written reason next to each skip in the code, such as KMS keys, cross-region replication and access logging.
+
+### What I verified
+- Gitleaks found no secrets, and Checkov passes with the documented skips.
+- Stopping the trail's logging sent an alert email within seconds, naming the user, IP and time. Logging was turned back on right away.
+- The Access Analyzer reported ACTIVE.
+- The root-login rule is created but I did not test it.
+
+### Teardown
+`terraform destroy` in `08-security-capstone/terraform` removes the trail, its bucket, the alert rules, the SNS topic and the analyzer.
+
+### Next steps
+- GuardDuty for automatic threat detection (needs an AWS paid plan).
+- A customer-managed KMS key for the trail logs and the alert topic.
+- Send CloudTrail to CloudWatch Logs and add metric alarms.
