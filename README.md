@@ -520,6 +520,15 @@ Three Ubuntu servers on AWS, built with CloudFormation and configured with Ansib
 - Register the `app` and `db` servers as hosts in Zabbix and add alert rules.
 - Replace the open SSH rule with a self-hosted GitLab runner inside the VPC.
 
+### Design decisions
+
+- **CloudFormation for the servers.** AWS-native and there is no state file to manage, which suits three short-lived servers. It also shows a second infrastructure tool next to Terraform.
+- **Ansible for configuration.** The playbook is repeatable: running it twice leaves the servers in the same state, and handlers restart services only when something changed.
+- **One playbook, three plays by role.** The Zabbix agent goes on every server, PostgreSQL on the database server, and the Zabbix server and web frontend on the monitoring server.
+- **Secrets kept out of the repo.** The SSH key is ignored by Git, passwords are marked `no_log` in Ansible, and GitLab holds the database password as a masked variable and the key as a base64 variable.
+- **Syntax check before configure.** The pipeline validates the playbook first, so a typo fails fast and never touches the servers.
+- **Default VPC.** Networking is kept simple on purpose, so the stage stays focused on configuration management.
+
 ## Stage 8: Security Review (Checkov, gitleaks, CloudTrail, EventBridge, Access Analyzer)
 
 A security layer for the AWS account: stop risky changes in CI, keep a record of everything, and get an email when something dangerous happens.
