@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Stage 7 - three servers (app, db, monitor) in the default VPC
+
+Parameters:
+  PublicKey:
+    Type: String
+    Description: SSH public key content
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+
+Resources:
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: stage7-key
+      PublicKeyMaterial: !Ref PublicKey
+
+  ServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Stage 7 servers
+      SecurityGroupIngress:
+        # SSH open because GitLab shared runners have changing IPs. Key-only login; destroyed after the demo.
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        # Zabbix web page
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  SelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt ServerSG.GroupId
+      SourceSecurityGroupId: !GetAtt ServerSG.GroupId
+      IpProtocol: "-1"
+
+  App:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPair
+      SecurityGroupIds: [!GetAtt ServerSG.GroupId]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 20 }
+      Tags: [{ Key: Name, Value: stage7-app }]
+
+  Db:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPair
+      SecurityGroupIds: [!GetAtt ServerSG.GroupId]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 20 }
+      Tags: [{ Key: Name, Value: stage7-db }]
+
+  Monitor:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.small
+      KeyName: !Ref KeyPair
+      SecurityGroupIds: [!GetAtt ServerSG.GroupId]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 20 }
+      Tags: [{ Key: Name, Value: stage7-monitor }]
+
+Outputs:
+  AppPublicIp:
+    Value: !GetAtt App.PublicIp
+  DbPublicIp:
+    Value: !GetAtt Db.PublicIp
+  MonitorPublicIp:
+    Value: !GetAtt Monitor.PublicIp
+  AppPrivateIp:
+    Value: !GetAtt App.PrivateIp
+  DbPrivateIp:
+    Value: !GetAtt Db.PrivateIp
+  MonitorPrivateIp:
+    Value: !GetAtt Monitor.PrivateIp
