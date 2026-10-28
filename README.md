@@ -427,6 +427,13 @@ Real bugs diagnosed and fixed:
 
 **Files:** `05-kubernetes-nodes/main.tf`, `deployment.yaml`, `service.yaml`, `ingress.yaml`, `pdb.yaml`, `hpa.yaml`, `iam_policy.json`, `app/`, `.github/workflows/eks-deploy.yml`, and `.github/workflows/terraform.yml`.
 
+### Design decisions
+
+- **EKS managed control plane.** AWS runs and patches the Kubernetes control plane, so the project focuses on deploying and operating workloads rather than running Kubernetes itself.
+- **ALB Ingress instead of one load balancer per service.** A single Application Load Balancer routes traffic to the services by path, which costs less and gives one place to manage entry points.
+- **GitHub Actions deploys with OIDC.** The pipeline assumes an IAM role with short-lived credentials, so no AWS keys are stored in GitHub.
+- **Infrastructure in Terraform, workloads in Kubernetes manifests.** The cluster and the application are separate concerns that change at different speeds, so each has its own code and its own lifecycle.
+
 ## Stage 6 — Kubernetes on Fargate with Observability and GitOps
 
 **Goal:** Run the Stage 4 app on EKS with no servers to manage, and make it observable and reliable: centralised logs, metrics, an SLO with an error budget and burn-rate alerts, and deploys driven by Git (Argo CD first, then Flux).
