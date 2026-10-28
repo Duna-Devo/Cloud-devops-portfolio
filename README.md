@@ -494,6 +494,14 @@ flowchart LR
 
 **Files:** `terraform/` (cluster), `ci-role/` (OIDC role), `app/` (Flask app), `charts/app/` (Helm chart and SLO rules), `helm/` (monitoring, Argo CD and Flux values), `k8s/` (logging config), `argocd/` and `flux/` (GitOps definitions).
 
+### Design decisions
+
+- **Fargate instead of managed nodes.** There are no servers to patch or size, and each pod gets its own isolated compute. The trade-off is a higher cost per pod, which is acceptable for a short-lived demo cluster.
+- **Prometheus and Grafana for observability.** These are the standard open-source tools for Kubernetes metrics, and they work the same on any cluster, not only on AWS.
+- **GitOps with Flux.** Git is the source of truth. The cluster pulls changes from the repo, so nobody runs `kubectl apply` by hand, and every change is reviewed and recorded in Git history.
+- **GitHub OIDC instead of stored AWS keys.** The pipeline gets short-lived credentials, and the IAM trust policy is limited to this repository.
+- **Terraform with S3 remote state.** The cluster is built from code and can be rebuilt or destroyed in one command.
+
 ## Stage 7: Server Configuration (CloudFormation, Ansible, GitLab CI)
 
 Three Ubuntu servers on AWS, built with CloudFormation and configured with Ansible. A GitLab CI pipeline runs the playbook, so no one runs Ansible by hand.
