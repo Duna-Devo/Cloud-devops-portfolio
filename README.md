@@ -359,6 +359,14 @@ flowchart LR
 
 **Files:** see `04-containers/app/` (Flask app and Dockerfile), `04-containers/terraform/` (network.tf, security.tf, ecr.tf, ecs.tf, alb.tf, edge.tf, monitoring.tf, autoscaling.tf), `04-containers/ci-role/`, and `.github/workflows/container-deploy.yml`.
 
+### Design decisions
+
+- **Trivy scan before deploy.** The image is scanned for known vulnerabilities in the pipeline, so a risky image is caught before it reaches ECS.
+- **Manual approval before production.** Dev deploys automatically, but production waits for a person to approve it.
+- **Automatic rollback.** If the new version fails its health check after deploy, the pipeline puts the previous version back.
+- **CloudFront in front of the app.** It provides HTTPS and caching, and the app is not exposed directly.
+- **Everything in Terraform with S3 remote state.** The environment can be rebuilt or destroyed in one command.
+
 ## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
 **Goal:** deploy the Stage 4 Flask app onto Amazon EKS, demonstrate Kubernetes' self-healing, and automate releases with a pipeline that scans the image, promotes it from staging to production, and rolls back a failed rollout.
@@ -505,7 +513,7 @@ flowchart LR
 
 - **Fargate instead of managed nodes.** There are no servers to patch or size, and each pod gets its own isolated compute. The trade-off is a higher cost per pod, which is acceptable for a short-lived demo cluster.
 - **Prometheus and Grafana for observability.** These are the standard open-source tools for Kubernetes metrics, and they work the same on any cluster, not only on AWS.
-- **GitOps with Flux.** Git is the source of truth. The cluster pulls changes from the repo, so nobody runs `kubectl apply` by hand, and every change is reviewed and recorded in Git history.
+- **GitOps with Argo CD, then Flux.** Git is the source of truth. The cluster pulls changes from the repo, so nobody runs `kubectl apply` by hand, and every change is reviewed and recorded in Git history. Using both tools shows the same pull-based model with two different tools.
 - **GitHub OIDC instead of stored AWS keys.** The pipeline gets short-lived credentials, and the IAM trust policy is limited to this repository.
 - **Terraform with S3 remote state.** The cluster is built from code and can be rebuilt or destroyed in one command.
 
