@@ -42,7 +42,7 @@ Hands-on cloud infrastructure projects: AWS, Terraform, Kubernetes, CI/CD.
 
 | # | Stage | Description | Status |
 |---|---|---|---|
-| [7](07-server-configuration) | Linux servers with Ansible | Linux servers on EC2 configured with Ansible, running PostgreSQL, monitored by Zabbix, and deployed through GitLab CI | Planned |
+| [7](07-server-configuration) | Linux servers with Ansible | Linux servers on EC2 built with CloudFormation and configured with Ansible, running PostgreSQL, monitored by Zabbix, and deployed through GitLab CI | Complete |
 
 ### Security
 
@@ -493,3 +493,29 @@ flowchart LR
 - Add a public endpoint with the AWS Load Balancer Controller (needs IRSA on Fargate) and a staging-then-production gate, as in Stage 4.
 
 **Files:** `terraform/` (cluster), `ci-role/` (OIDC role), `app/` (Flask app), `charts/app/` (Helm chart and SLO rules), `helm/` (monitoring, Argo CD and Flux values), `k8s/` (logging config), `argocd/` and `flux/` (GitOps definitions).
+
+## Stage 7: Server Configuration (CloudFormation, Ansible, GitLab CI)
+
+Three Ubuntu servers on AWS, built with CloudFormation and configured with Ansible. A GitLab CI pipeline runs the playbook, so no one runs Ansible by hand.
+
+| Server | Role |
+|--------|------|
+| app | Zabbix agent |
+| db | PostgreSQL 14 (holds the Zabbix database) |
+| monitor | Zabbix server and web frontend, Zabbix agent |
+
+### How it works
+- `07-server-configuration/cloudformation/servers.yaml` creates the key pair, security group and three EC2 instances in one stack.
+- `07-server-configuration/ansible/site.yml` has three plays: install the Zabbix agent on every server, set up PostgreSQL on `db`, then set up the Zabbix server and web page on `monitor`, pointing it at the database on `db`. The playbook can be re-run safely.
+- `07-server-configuration/.gitlab-ci.yml` runs a syntax check first, then the playbook against the servers over SSH. The database password and SSH key are GitLab CI variables, not files in Git.
+
+### What I verified
+- The pipeline ran green and the playbook configured all three servers.
+- The Zabbix web page loaded and listed the Zabbix server host as available, which shows the server is using the PostgreSQL database on the `db` server.
+
+### Teardown
+`aws cloudformation delete-stack --stack-name stage7-servers` removes all three servers, the security group and the key pair.
+
+### Next steps
+- Register the `app` and `db` servers as hosts in Zabbix and add alert rules.
+- Replace the open SSH rule with a self-hosted GitLab runner inside the VPC.
