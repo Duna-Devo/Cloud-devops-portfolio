@@ -137,6 +137,11 @@ flowchart TB
 
 
 
+### Design decisions
+
+- **Two-tier layout.** The web tier is separated from the database tier so each can be secured and scaled on its own.
+- **Built by hand and with the CLI first.** Doing it manually shows what each AWS service does before any automation hides it.
+
 ## Stage 2 — Infrastructure as Code (Terraform)
 
 **Goal:** rebuild Stage 1's entire architecture declaratively using Terraform, with remote state, and prove that infrastructure defined in code remains the source of truth even after manual changes (drift detection).
@@ -157,6 +162,11 @@ flowchart TB
 
 **Files:** see `02-terraform/main.tf` and `02-terraform/variables.tf` for the full configuration.
 
+
+### Design decisions
+
+- **Terraform instead of console clicks.** The Stage 1 architecture is described in code, so it is repeatable, reviewable and easy to destroy.
+- **Remote S3 state.** State is stored centrally instead of on one laptop.
 
 ## Stage 2b — Serverless API; Terraform (production design)
 
@@ -227,6 +237,12 @@ flowchart LR
 **Files:** see `02b-serverless-terraform/` (`data.tf`, `lambda.tf`, `auth.tf`, `api.tf`, `edge.tf`, `monitoring.tf`, `dashboard.tf`, `lambda/handler.py`, `scripts/smoke_test.sh`, `scripts/bundle_lambda.sh`, `ci-roles/`) and `.github/workflows/serverless.yml`.
 
 
+### Design decisions
+
+- **Serverless for a low-traffic API.** Lambda and API Gateway cost nothing while idle and need no servers to patch.
+- **Defence in depth at the edge.** CloudFront and WAF sit in front of the API, so abusive traffic is filtered before it reaches the application.
+- **Scoped permissions per function.** Each Lambda gets only the access it needs, so one compromised function cannot reach everything.
+
 ## Stage 3 — CI/CD Pipeline (GitHub Actions + Terraform)
 
 **Goal:** replace manual `terraform apply` runs with an automated pipeline — every infrastructure change reviewed via pull request, planned automatically, and only applied after a deliberate merge to main.
@@ -273,6 +289,11 @@ AWS resources after the first failed destroy attempt.
 
 **Files:** see `.github/workflows/deploy.yml` for the pipeline definition.
 
+### Design decisions
+
+- **GitHub Actions with Terraform.** Every change is planned in CI and applied only after review, so infrastructure changes go through the same pull request process as code.
+- **S3 remote state with locking.** State is shared and protected from two runs changing it at once.
+
 ## Stage 3b — CI/CD Pipeline (Jenkins on EC2 + Terraform)
 
 **Goal:** run a pipeline like Stage 3's in Jenkins instead of GitHub Actions, host Jenkins myself, and use it to deploy a small serverless API (a DynamoDB table, a Lambda function with its role, and an API route), to learn what a self-hosted CI/CD server costs in setup and upkeep.
@@ -305,6 +326,11 @@ AWS resources after the first failed destroy attempt.
 
 **Files:** see `03b-jenkins/main.tf` (Jenkins server) and `03b-jenkins/Jenkinsfile` (pipeline). Screenshots of the green pipeline run are in `03b-jenkins/screenshots/`.
 
+
+### Design decisions
+
+- **Jenkins on EC2 to show a self-hosted pipeline.** It contrasts with the managed GitHub Actions pipeline in Stage 3 and shows how a team that runs its own CI server works.
+- **Terraform builds the Jenkins server.** The server itself is code, so it can be rebuilt or destroyed in one command.
 
 ## Stage 4 — Containerization & ECS Deployment
 
@@ -358,6 +384,14 @@ flowchart LR
 - Register a domain so the CloudFront-to-load-balancer leg can use HTTPS end to end.
 
 **Files:** see `04-containers/app/` (Flask app and Dockerfile), `04-containers/terraform/` (network.tf, security.tf, ecr.tf, ecs.tf, alb.tf, edge.tf, monitoring.tf, autoscaling.tf), `04-containers/ci-role/`, and `.github/workflows/container-deploy.yml`.
+
+### Design decisions
+
+- **Trivy scan before deploy.** The image is scanned for known vulnerabilities in the pipeline, so a risky image is caught before it reaches ECS.
+- **Manual approval before production.** Dev deploys automatically, but production waits for a person to approve it.
+- **Automatic rollback.** If the new version fails its health check after deploy, the pipeline puts the previous version back.
+- **CloudFront in front of the app.** It provides HTTPS and caching, and the app is not exposed directly.
+- **Everything in Terraform with S3 remote state.** The environment can be rebuilt or destroyed in one command.
 
 ## Stage 5 — Kubernetes (EKS) + GitHub Actions Deploy Pipeline
 
@@ -505,7 +539,7 @@ flowchart LR
 
 - **Fargate instead of managed nodes.** There are no servers to patch or size, and each pod gets its own isolated compute. The trade-off is a higher cost per pod, which is acceptable for a short-lived demo cluster.
 - **Prometheus and Grafana for observability.** These are the standard open-source tools for Kubernetes metrics, and they work the same on any cluster, not only on AWS.
-- **GitOps with Flux.** Git is the source of truth. The cluster pulls changes from the repo, so nobody runs `kubectl apply` by hand, and every change is reviewed and recorded in Git history.
+- **GitOps with Argo CD, then Flux.** Git is the source of truth. The cluster pulls changes from the repo, so nobody runs `kubectl apply` by hand, and every change is reviewed and recorded in Git history. Using both tools shows the same pull-based model with two different tools.
 - **GitHub OIDC instead of stored AWS keys.** The pipeline gets short-lived credentials, and the IAM trust policy is limited to this repository.
 - **Terraform with S3 remote state.** The cluster is built from code and can be rebuilt or destroyed in one command.
 
