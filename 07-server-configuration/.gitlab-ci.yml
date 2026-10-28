@@ -7,7 +7,7 @@ stages:
 before_script:
   - apt-get update -qq && apt-get install -y -qq openssh-client
   - pip install -q ansible
-  - chmod 600 "$SSH_KEY_FILE"
+  - echo "$SSH_KEY_B64" | base64 -d > /tmp/stage7-key && chmod 600 /tmp/stage7-key
 
 syntax-check:
   stage: check
@@ -17,4 +17,4 @@ syntax-check:
 configure-servers:
   stage: configure
   script:
-    - ansible-playbook -i 07-server-configuration/ansible/inventory.ini 07-server-configuration/ansible/site.yml --private-key "$SSH_KEY_FILE" -e "zabbix_db_password=$ZABBIX_DB_PASSWORD"
+    - ansible-playbook -i 07-server-configuration/ansible/inventory.ini 07-server-configuration/ansible/site.yml --private-key /tmp/stage7-key -e "zabbix_db_password=$ZABBIX_DB_PASSWORD"
