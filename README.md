@@ -593,20 +593,19 @@ A security layer for the AWS account: stop risky changes in CI, keep a record of
 ### How it works
 - `08-security-capstone/terraform/` holds the Terraform (S3 remote backend): the trail and its bucket in `main.tf`, the alerts in `alerts.tf`, the analyzer in `analyzer.tf`.
 - `.github/workflows/stage8-security.yml` runs Checkov and gitleaks on every push to the folder.
-- Checkov's first run failed. I fixed the findings that mattered (versioning, lifecycle rule, explicit encryption) and skipped the rest with a written reason next to each skip in the code, such as KMS keys, cross-region replication and access logging.
+- Checkov's first run failed. I fixed the findings that mattered (versioning, lifecycle rule, explicit encryption) and skipped the rest with a written reason next to each skip in the code, such as cross-region replication and access logging.
 
 ### What I verified
 - Gitleaks found no secrets, and Checkov passes with the documented skips.
 - Stopping the trail's logging sent an alert email within seconds, naming the user, IP and time. Logging was turned back on right away.
 - The Access Analyzer reported ACTIVE.
-- The root-login rule is created but I did not test it.
+- Signing in to the console as the root user sent an alert email within a minute, so the root-login rule works with the encrypted topic.
 
 ### Teardown
-`terraform destroy` in `08-security-capstone/terraform` removes the trail, its bucket, the alert rules, the SNS topic and the analyzer.
+`terraform destroy` in `08-security-capstone/terraform` removes the trail, its bucket, the alert rules, the SNS topic, the analyzer, the budget and the KMS key (AWS keeps the key for 7 days before deleting it).
 
 ### Next steps
 - GuardDuty for automatic threat detection (needs an AWS paid plan).
-- A customer-managed KMS key for the trail logs and the alert topic.
 - Send CloudTrail to CloudWatch Logs and add metric alarms.
 
 ### Design decisions
@@ -616,4 +615,6 @@ A security layer for the AWS account: stop risky changes in CI, keep a record of
 - **Locked-down log bucket.** Public access is blocked, versioning and AES256 encryption are on, and a 90-day lifecycle rule keeps storage cost down.
 - **Access Analyzer at account scope.** There is no AWS Organization in this account, so the analyzer covers the account.
 - **Checkov and gitleaks in CI.** Misconfigured infrastructure and leaked secrets fail the pull request before they reach main.
-- **Documented Checkov skips.** Each skip is a comment next to the resource with its reason. Examples are a customer-managed KMS key and cross-region replication, which are out of scope for a demo account.
+- **Documented Checkov skips.** Each skip is a comment next to the resource with its reason. Examples are cross-region replication and access logging, which are out of scope for a demo account.
+- **Customer-managed KMS key.** CloudTrail log files and the alert topic are encrypted with one key that rotates automatically, and its policy only allows CloudTrail, EventBridge and SNS to use it.
+- **Budget alert and cost tags.** A monthly budget emails me when spending passes 80% and 100% of $10, and every resource carries Project, Stage and ManagedBy tags so costs can be traced to a stage.
