@@ -392,9 +392,22 @@ The service is set to keep average CPU near 60%, between 2 and 4 tasks. I tested
 
 The median response time was 14 ms. About 0.5% of requests (1,261 of 250,000) failed, and the slowest responses took 7 to 15 seconds, both from the minutes when two tasks carried the full load before the new tasks started. Scale-out takes about 4 minutes to react, and scale-in is slower on purpose (a 5-minute cooldown after 15 minutes of low CPU) so the service does not flap.
 
+### Failing release test
+
+To test the circuit breaker, I pushed an image that starts and immediately exits, then pointed the service at it.
+
+| Time (ET) | What happened |
+|---|---|
+| 6:04 PM | The broken version is deployed |
+| 6:05 to 6:07 PM | Its tasks crash on start and the failed task count rises 1, 2, 3 |
+| 6:07 PM | The circuit breaker marks the deployment FAILED |
+| 6:09 PM | The service is back on the previous version with 2 of 2 tasks running |
+
+The old tasks kept serving traffic the whole time. A request sent every 5 seconds through CloudFront returned 200 every time. This tested the ECS circuit breaker; the rollback step in the deploy pipeline has not been exercised.
+
 **Next steps:**
 
-- Trigger a failing release on purpose to exercise the circuit breaker and the pipeline's rollback; both are configured, but neither has fired.
+- Exercise the rollback step in the deploy pipeline; the ECS circuit breaker itself is now proven.
 - Provision the production environment (same Terraform, its own name and state) so the approval gate has something to deploy to.
 - Register a domain so the CloudFront-to-load-balancer leg can use HTTPS end to end.
 
