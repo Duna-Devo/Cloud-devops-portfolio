@@ -376,9 +376,24 @@ flowchart LR
 
 **Teardown:** ran `terraform destroy` from `04-containers/terraform`, which removed all 45 resources in dependency order. Afterwards I checked that no ECS clusters, load balancers, NAT Gateways, CloudFront distributions or ECR repositories remained. The ECR repository is created with `force_delete`, so its images went with it. The deploy roles in `04-containers/ci-role/` have their own state and were left in place, so the pipeline keeps its access for the next build.
 
+### Load test results
+
+The service is set to keep average CPU near 60%, between 2 and 4 tasks. I tested it from AWS CloudShell with 200 concurrent users sending 250,000 requests over about 8 minutes (roughly 547 requests per second).
+
+| Time (ET) | What happened |
+|---|---|
+| 5:13 PM | Load starts, CPU rises to 56% with 2 tasks |
+| 5:14 to 5:18 PM | CPU holds at about 91% |
+| 5:17 PM | Autoscaling raises the desired count from 2 to 4 |
+| 5:19 PM | All 4 tasks are running and CPU drops to 54% |
+| 5:20 PM | Load ends and CPU falls to about 2% |
+| 5:36 PM | Scale-in, 4 to 3 tasks |
+| 5:42 PM | Scale-in, 3 to 2 tasks |
+
+The median response time was 14 ms. About 0.5% of requests (1,261 of 250,000) failed, and the slowest responses took 7 to 15 seconds, both from the minutes when two tasks carried the full load before the new tasks started. Scale-out takes about 4 minutes to react, and scale-in is slower on purpose (a 5-minute cooldown after 15 minutes of low CPU) so the service does not flap.
+
 **Next steps:**
 
-- Run a load test heavy enough to push CPU past 60% and watch the service scale out; the scaling policy is configured and confirmed in AWS but has not been exercised.
 - Trigger a failing release on purpose to exercise the circuit breaker and the pipeline's rollback; both are configured, but neither has fired.
 - Provision the production environment (same Terraform, its own name and state) so the approval gate has something to deploy to.
 - Register a domain so the CloudFront-to-load-balancer leg can use HTTPS end to end.
