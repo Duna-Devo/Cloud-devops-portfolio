@@ -555,8 +555,19 @@ flowchart LR
 
 **Teardown:** the Flux and monitoring releases were uninstalled, then `terraform destroy` removed the cluster, network, ECR repo and log group. The `stage6-ci` role and its state in `ci-role/` stay, as in Stage 4.
 
+### Self-heal test results
+
+I ran these tests on the Stage 6 cluster with the app set to 2 replicas in Git.
+
+| Test | What I did | Result |
+|---|---|---|
+| Pod self-heal | Deleted one app pod | Kubernetes created a replacement within about 1 second, and it was ready 56 seconds later. The other pod kept serving traffic. |
+| Argo CD self-heal | Scaled the Deployment to 5 by hand | Argo CD scaled it back to 2 within about 1 second. |
+| Flux drift detection | Scaled the Deployment to 5 by hand | Flux scaled it back to 2 after about 1 minute. |
+
+Argo CD reverted the change almost at once, while Flux took about a minute. For this app, either speed is fine.
+
 **Next steps**
-- Record the self-heal test (scale by hand, watch the GitOps tool undo it) for both tools.
 - Turn on Alertmanager so alerts reach email or SNS. Right now they only show in Prometheus.
 - Give Prometheus persistent storage (EFS), since metrics reset when the pod restarts. The SLO dashboard uses a 1-hour window because retention is 6 hours; production would use 30 days.
 - Add a public endpoint with the AWS Load Balancer Controller (needs IRSA on Fargate) and a staging-then-production gate, as in Stage 4.
