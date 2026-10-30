@@ -642,6 +642,14 @@ A security layer for the AWS account: stop risky changes in CI, keep a record of
 - The Access Analyzer reported ACTIVE.
 - Signing in to the console as the root user sent an alert email within a minute, so the root-login rule works with the encrypted topic.
 
+### Multi-account guardrails
+
+`08-security-capstone/organizations/` creates an AWS Organization with a `sandbox` unit, one member account (`stage8-sandbox`) and a service control policy (SCP) attached to that unit. The policy denies three things: working outside us-east-1, leaving the organization, and stopping or deleting CloudTrail. It has its own Terraform state, separate from the trail stack.
+
+I signed in to the sandbox account through its administrator role and ran the same call in two regions. `ec2:DescribeVpcs` worked in us-east-1 and failed in eu-west-1 with "explicit deny in a service control policy". An SCP never applies to the management account, which is why the test needs a member account.
+
+The organization and the empty sandbox account are free, so I kept them. `terraform destroy` in that folder closes the member account. AWS keeps a closed account in a suspended state for 90 days, so the organization cannot be deleted straight away.
+
 ### Teardown
 `terraform destroy` in `08-security-capstone/terraform` removes the trail, its bucket, the alert rules, the SNS topic, the analyzer, the budget and the KMS key (AWS keeps the key for 7 days before deleting it).
 
@@ -659,3 +667,4 @@ A security layer for the AWS account: stop risky changes in CI, keep a record of
 - **Documented Checkov skips.** Each skip is a comment next to the resource with its reason. Examples are cross-region replication and access logging, which are out of scope for a demo account.
 - **Customer-managed KMS key.** CloudTrail log files and the alert topic are encrypted with one key that rotates automatically, and its policy only allows CloudTrail, EventBridge and SNS to use it.
 - **Budget alert and cost tags.** A monthly budget emails me when spending passes 80% and 100% of $10, and every resource carries Project, Stage and ManagedBy tags so costs can be traced to a stage.
+- **Separate state for the organization.** The organization lives in its own Terraform folder, so it can be changed or removed without touching the trail, alerts or key.
