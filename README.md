@@ -583,25 +583,27 @@ Three Ubuntu servers on AWS, built with CloudFormation and configured with Ansib
 
 ### How it works
 - `07-server-configuration/cloudformation/servers.yaml` creates the key pair, security group and three EC2 instances in one stack.
-- `07-server-configuration/ansible/site.yml` has three plays: install the Zabbix agent on every server, set up PostgreSQL on `db`, then set up the Zabbix server and web page on `monitor`, pointing it at the database on `db`. The playbook can be re-run safely.
+- `07-server-configuration/ansible/site.yml` has four plays: install the Zabbix agent on every server, set up PostgreSQL on `db`, set up the Zabbix server and web page on `monitor` (pointing it at the database on `db`), then register `app` and `db` as hosts in Zabbix through its API using the Linux template. The playbook can be re-run safely.
 - `07-server-configuration/.gitlab-ci.yml` runs a syntax check first, then the playbook against the servers over SSH. The database password and SSH key are GitLab CI variables, not files in Git.
 
 ### What I verified
 - The pipeline ran green and the playbook configured all three servers.
 - The Zabbix web page loaded and listed the Zabbix server host as available, which shows the server is using the PostgreSQL database on the `db` server.
+- The playbook registers `app` and `db` in Zabbix through its API using the Linux template, and all three hosts show as available.
+- Stopping the agent on `db` raised a "Zabbix agent is not available" problem in Zabbix after about 3 minutes, and it cleared about 2 minutes after I restarted the agent.
 
 ### Teardown
 `aws cloudformation delete-stack --stack-name stage7-servers` removes all three servers, the security group and the key pair.
 
 ### Next steps
-- Register the `app` and `db` servers as hosts in Zabbix and add alert rules.
+- Send Zabbix alerts to email or chat; today a problem is only shown in the Zabbix web page.
 - Replace the open SSH rule with a self-hosted GitLab runner inside the VPC.
 
 ### Design decisions
 
 - **CloudFormation for the servers.** AWS-native and there is no state file to manage, which suits three short-lived servers. It also shows a second infrastructure tool next to Terraform.
 - **Ansible for configuration.** The playbook is repeatable: running it twice leaves the servers in the same state, and handlers restart services only when something changed.
-- **One playbook, three plays by role.** The Zabbix agent goes on every server, PostgreSQL on the database server, and the Zabbix server and web frontend on the monitoring server.
+- **One playbook, one play per job.** The Zabbix agent goes on every server, PostgreSQL on the database server, the Zabbix server and web frontend on the monitoring server, and a final play registers the other servers in Zabbix.
 - **Secrets kept out of the repo.** The SSH key is ignored by Git, passwords are marked `no_log` in Ansible, and GitLab holds the database password as a masked variable and the key as a base64 variable.
 - **Syntax check before configure.** The pipeline validates the playbook first, so a typo fails fast and never touches the servers.
 - **Default VPC.** Networking is kept simple on purpose, so the stage stays focused on configuration management.
