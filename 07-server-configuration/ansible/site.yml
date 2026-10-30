@@ -176,3 +176,147 @@
       ansible.builtin.service:
         name: zabbix-server
         state: restarted
+
+- name: Register app and db in Zabbix
+  hosts: monitor
+  gather_facts: false
+  vars:
+    zabbix_api_url: http://localhost/zabbix/api_jsonrpc.php
+    zabbix_api_user: Admin
+    zabbix_api_password: zabbix
+    zabbix_agents:
+      - app
+      - db
+  tasks:
+    - name: Collect network facts from the agent servers
+      ansible.builtin.setup:
+        gather_subset: network
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ zabbix_agents }}"
+
+    - name: Wait for the Zabbix API
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: apiinfo.version
+          params: {}
+          id: 1
+      register: api_check
+      until: api_check.status == 200
+      retries: 12
+      delay: 10
+
+    - name: Log in to the Zabbix API
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: user.login
+          params:
+            username: "{{ zabbix_api_user }}"
+            password: "{{ zabbix_api_password }}"
+          id: 1
+      register: zabbix_login
+      no_log: true
+
+    - name: Keep the API token
+      ansible.builtin.set_fact:
+        zabbix_token: "{{ zabbix_login.json.result }}"
+      no_log: true
+
+    - name: Look up the Linux monitoring template
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: template.get
+          params:
+            output: [templateid]
+            filter:
+              host: ["Linux by Zabbix agent"]
+          auth: "{{ zabbix_token }}"
+          id: 1
+      register: linux_template
+
+    - name: Look up the Linux servers group
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: hostgroup.get
+          params:
+            output: [groupid]
+            filter:
+              name: ["Linux servers"]
+          auth: "{{ zabbix_token }}"
+          id: 1
+      register: linux_group
+
+    - name: Check which hosts already exist
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: host.get
+          params:
+            output: [hostid]
+            filter:
+              host: ["{{ item }}"]
+          auth: "{{ zabbix_token }}"
+          id: 1
+      loop: "{{ zabbix_agents }}"
+      register: existing_hosts
+
+    - name: Create the hosts that are missing
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json-rpc
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: host.create
+          params:
+            host: "{{ item.item }}"
+            interfaces:
+              - type: 1
+                main: 1
+                useip: 1
+                ip: "{{ hostvars[item.item].ansible_default_ipv4.address }}"
+                dns: ""
+                port: "10050"
+            groups:
+              - groupid: "{{ linux_group.json.result[0].groupid }}"
+            templates:
+              - templateid: "{{ linux_template.json.result[0].templateid }}"
+          auth: "{{ zabbix_token }}"
+          id: 1
+      loop: "{{ existing_hosts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.json.result | length == 0
+      register: created_hosts
+      failed_when: created_hosts.json.error is defined
